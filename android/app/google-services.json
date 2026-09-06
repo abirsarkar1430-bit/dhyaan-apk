@@ -1,0 +1,30 @@
+{
+  "_comment": "PLACEHOLDER FILE - REPLACE ME. See README.md 'Firebase setup' section.",
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "dhyaan-placeholder",
+    "storage_bucket": "dhyaan-placeholder.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+        "android_client_info": {
+          "package_name": "com.dhyaan.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "PLACEHOLDER_API_KEY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

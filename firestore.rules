@@ -1,0 +1,16 @@
+rules_version = '2';
+
+// NOTE: These rules are intentionally open ("allow read, write: if true")
+// so the app works instantly on the Firebase Spark (free) plan with zero
+// backend setup, per the $0-budget requirement. This is fine for an MVP /
+// personal-use build, but it means ANYONE with your Firestore project id
+// could read or write this data. Before sharing this app widely, tighten
+// these rules (e.g. require Firebase Auth and scope access to the signed-in
+// user's own student doc).
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

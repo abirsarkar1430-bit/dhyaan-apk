@@ -1,173 +1,1569 @@
+import 'dart:async';
+import 'dart:math';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:intl/intl.dart';
-import 'dart:async';
 
-void main() => runApp(DhyaanApp());
+// ============================================================================
+// COLORS / THEME
+// ============================================================================
+const kBg = Color(0xFFF8FAFC);
+const kCardBorder = Color(0xFFE2E8F0);
+const kBlack = Color(0xFF0F172A);
+const kGreen = Color(0xFF10B981);
+const kRed = Color(0xFFEF4444);
+const kMuted = Color(0xFF64748B);
+const kRadius = 18.0;
+
+// ============================================================================
+// METHOD CHANNEL
+// ============================================================================
+class NativeBridge {
+  static const _channel = MethodChannel('com.dhyaan.app/usage');
+
+  static Future<Map<String, int>> getAllAppsUsage() async {
+    try {
+      final result = await _channel.invokeMethod('getAllAppsUsage');
+      if (result == null) return {};
+      final map = Map<String, dynamic>.from(result as Map);
+      return map.map((k, v) => MapEntry(k, (v as num).toInt()));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<int> getYoutubeUsage() async {
+    try {
+      final result = await _channel.invokeMethod('getYoutubeUsage');
+      return (result as num?)?.toInt() ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  static Future<int> getOfflineStudyTime() async {
+    try {
+      final result = await _channel.invokeMethod('getOfflineStudyTime');
+      return (result as num?)?.toInt() ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  static Future<bool> hasUsagePermission() async {
+    try {
+      final result = await _channel.invokeMethod('hasUsagePermission');
+      return result == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> hasNotifPermission() async {
+    try {
+      final result = await _channel.invokeMethod('hasNotifPermission');
+      return result == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> openUsageSettings() async {
+    try {
+      await _channel.invokeMethod('openUsageSettings');
+    } catch (_) {}
+  }
+
+  static Future<void> openNotifSettings() async {
+    try {
+      await _channel.invokeMethod('openNotifSettings');
+    } catch (_) {}
+  }
+
+  static Future<void> startStudyService() async {
+    try {
+      await _channel.invokeMethod('startStudyService');
+    } catch (_) {}
+  }
+
+  static Future<void> stopStudyService() async {
+    try {
+      await _channel.invokeMethod('stopStudyService');
+    } catch (_) {}
+  }
+}
+
+// ============================================================================
+// NOTE: YouTube title tagging (STUDY/DISTRACTION keyword matching) used to
+// live here in Dart. It has moved entirely to native Kotlin
+// (TitleTagger.kt / DhyaanCore.kt), because that logic needs to run the
+// moment a new YouTube title is detected - which normally happens while a
+// student has closed the Dhyaan app and is just studying with the phone
+// screen off. Keeping two separate copies of the tagging logic (one in
+// Dart, one in Kotlin) risked both processing the same title and writing
+// duplicate Firestore entries, so this is now single-sourced natively.
+// ============================================================================
+
+// ============================================================================
+// MAIN
+// ============================================================================
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await Firebase.initializeApp();
+  } catch (e) {
+    debugPrint('Firebase init failed: $e');
+  }
+  runApp(const DhyaanApp());
+}
 
 class DhyaanApp extends StatelessWidget {
+  const DhyaanApp({super.key});
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(debugShowCheckedModeBanner: false, title: 'Dhyaan', theme: ThemeData(scaffoldBackgroundColor: Color(0xFFF8FAFC)), home: RoleSelect());
+    return MaterialApp(
+      title: 'Dhyaan - Padhai ka Sach',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        scaffoldBackgroundColor: kBg,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: kBlack,
+          background: kBg,
+          brightness: Brightness.light,
+        ),
+        textTheme: ThemeData.light().textTheme.apply(
+              bodyColor: kBlack,
+              displayColor: kBlack,
+            ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: kBg,
+          foregroundColor: kBlack,
+          elevation: 0,
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: kBlack,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: kCardBorder),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: kCardBorder),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: kBlack, width: 1.4),
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        ),
+      ),
+      home: const RoleSelectScreen(),
+    );
   }
 }
 
-class RoleSelect extends StatelessWidget {
+// ============================================================================
+// SHARED UI HELPERS
+// ============================================================================
+class AppCard extends StatelessWidget {
+  final Widget child;
+  final EdgeInsets padding;
+  const AppCard({super.key, required this.child, this.padding = const EdgeInsets.all(18)});
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(body: Center(child: Padding(padding: EdgeInsets.all(24), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Icon(Icons.self_improvement, size: 72, color: Colors.black87),
-      SizedBox(height:12),
-      Text("Dhyaan", style: TextStyle(fontSize:44, fontWeight: FontWeight.bold)),
-      Text("Padhai ka Sach", style: TextStyle(color: Colors.grey, fontSize:16)),
-      SizedBox(height:48),
-      _card(context, "I am a Student", "Track focus + offline study", Icons.school, true),
-      SizedBox(height:16),
-      _card(context, "I am a Parent", "Full report with charts", Icons.family_restroom, false),
-      SizedBox(height:40),
-      Text("© 2026 Dhyaan • Focus, Measured.", style: TextStyle(fontSize:11, color: Colors.grey))
-    ]))));
-  }
-  Widget _card(BuildContext c, String t, String s, IconData ic, bool isStu){
-    return InkWell(onTap: () async { final prefs = await SharedPreferences.getInstance(); await prefs.setBool("isStudent", isStu); Navigator.push(c, MaterialPageRoute(builder: (_)=> LoginScreen(isStudent: isStu))); }, child: Container(width: double.infinity, padding: EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18), border: Border.all(color: Colors.grey.shade200)), child: Row(children: [Container(padding: EdgeInsets.all(12), decoration: BoxDecoration(color: Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(12)), child: Icon(ic)), SizedBox(width:16), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(t, style: TextStyle(fontWeight: FontWeight.bold)), Text(s, style: TextStyle(fontSize:12, color: Colors.grey))])])));
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(kRadius),
+        border: Border.all(color: kCardBorder),
+      ),
+      child: child,
+    );
   }
 }
 
-class LoginScreen extends StatefulWidget { final bool isStudent; LoginScreen({required this.isStudent}); @override State<LoginScreen> createState()=> _LoginScreenState(); }
-class _LoginScreenState extends State<LoginScreen> {
-  TextEditingController nameCtrl = TextEditingController();
-  TextEditingController codeCtrl = TextEditingController();
-  String existingCode = "";
-  @override void initState(){ super.initState(); _load(); }
-  Future<void> _load() async { final p = await SharedPreferences.getInstance(); setState(()=> existingCode = p.getString("linkCode") ?? p.getString("student_code") ?? ""); }
-  @override Widget build(BuildContext context){
-    return Scaffold(appBar: AppBar(title: Text(widget.isStudent ? "Student Login" : "Parent Login")), body: Padding(padding: EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      if(widget.isStudent)...[
-        Text("Student Login", style: TextStyle(fontSize:24, fontWeight: FontWeight.bold)),
-        if(existingCode.isNotEmpty) Container(margin: EdgeInsets.only(top:12), padding: EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12)), child: Text("Existing code: \$existingCode will be reused", style: TextStyle(fontWeight: FontWeight.bold))),
-        SizedBox(height:24),
-        TextField(controller: nameCtrl, decoration: InputDecoration(labelText: "Your Name", border: OutlineInputBorder())),
-        SizedBox(height:20),
-        SizedBox(width: double.infinity, height:50, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white), onPressed: () async { final prefs = await SharedPreferences.getInstance(); String code = existingCode.isNotEmpty ? existingCode : (100000 + DateTime.now().millisecondsSinceEpoch % 900000).toString().substring(0,6); await prefs.setString("linkCode", code); await prefs.setString("student_code", code); await prefs.setString("student_name", nameCtrl.text.isEmpty ? "Aman" : nameCtrl.text); Navigator.pushReplacement(context, MaterialPageRoute(builder: (_)=> StudentDashboard())); }, child: Text(existingCode.isNotEmpty ? "Continue with same code" : "Continue"))),
-      ] else ...[
-        Text("Parent Login", style: TextStyle(fontSize:24, fontWeight: FontWeight.bold)),
-        SizedBox(height:24),
-        TextField(controller: codeCtrl, decoration: InputDecoration(labelText: "Child Code", border: OutlineInputBorder(), hintText: existingCode.isNotEmpty ? "Try \$existingCode" : "e.g. 482913")),
-        SizedBox(height:20),
-        SizedBox(width: double.infinity, height:50, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white), onPressed: () async { final prefs = await SharedPreferences.getInstance(); await prefs.setString("linkedCode", codeCtrl.text); Navigator.pushReplacement(context, MaterialPageRoute(builder: (_)=> ParentDashboard())); }, child: Text("Link & View FULL Report"))),
-        if(existingCode.isNotEmpty) Padding(padding: EdgeInsets.only(top:16), child: Text("Tip: Student code on this phone is \$existingCode", style: TextStyle(fontSize:12, color: Colors.grey))),
-      ],
-      Spacer(),
-      Center(child: Text("© 2026 Dhyaan • Focus, Measured.", style: TextStyle(fontSize:11, color: Colors.grey)))
-    ])));
+class SectionTitle extends StatelessWidget {
+  final String text;
+  const SectionTitle(this.text, {super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Text(text,
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kBlack));
   }
 }
 
-class StudentDashboard extends StatefulWidget { @override State<StudentDashboard> createState()=> _StudentDashboardState(); }
-class _StudentDashboardState extends State<StudentDashboard> {
-  static const channel = MethodChannel("com.dhyaan.app/usage");
-  String linkCode = ""; String studentName = "";
-  List<Map<String,String>> titles = [];
-  Map<String,int> appUsage = {};
-  int offlineMs = 0;
-  bool isStudying = false; int studySec = 0;
-  Timer? timer; Timer? poll;
-  bool hasUsage = false; bool hasNotif = false;
-  @override void initState(){ super.initState(); _loadAll(); _polling(); }
-  @override void dispose(){ timer?.cancel(); poll?.cancel(); super.dispose(); }
-  Future<void> _loadAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState((){
-      linkCode = prefs.getString("linkCode") ?? prefs.getString("student_code") ?? "000000";
-      studentName = prefs.getString("student_name") ?? "Aman";
+Widget footer() {
+  return const Padding(
+    padding: EdgeInsets.symmetric(vertical: 24),
+    child: Center(
+      child: Text('© 2026 Dhyaan', style: TextStyle(color: kMuted, fontSize: 12)),
+    ),
+  );
+}
+
+String fmtMinutes(int mins) {
+  if (mins < 60) return '${mins}m';
+  final h = mins ~/ 60;
+  final m = mins % 60;
+  return m == 0 ? '${h}h' : '${h}h ${m}m';
+}
+
+String fmtHms(int totalSeconds) {
+  final h = totalSeconds ~/ 3600;
+  final m = (totalSeconds % 3600) ~/ 60;
+  final s = totalSeconds % 60;
+  return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+}
+
+// ============================================================================
+// ROLE SELECT
+// ============================================================================
+class RoleSelectScreen extends StatelessWidget {
+  const RoleSelectScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            children: [
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Focus mark: a target/bullseye motif tying the wordmark to "Focus, Measured."
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: kBlack,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Center(
+                          child: Container(
+                            width: 20,
+                            height: 20,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 1.6),
+                            ),
+                            child: Center(
+                              child: Container(
+                                width: 7,
+                                height: 7,
+                                decoration: const BoxDecoration(color: kGreen, shape: BoxShape.circle),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      const Text('Dhyaan',
+                          style: TextStyle(
+                              fontSize: 34,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.5,
+                              height: 1.0,
+                              color: kBlack)),
+                      const SizedBox(height: 6),
+                      const Text('Focus, Measured.',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.1,
+                              color: kMuted)),
+                      const SizedBox(height: 56),
+                      const Text('I am a...',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kMuted)),
+                      const SizedBox(height: 14),
+                      _RoleCard(
+                        title: 'Student',
+                        subtitle: 'Track your study sessions and stay accountable',
+                        icon: Icons.school_rounded,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const StudentLoginScreen()),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      _RoleCard(
+                        title: 'Parent',
+                        subtitle: 'View your child\'s study progress in real time',
+                        icon: Icons.family_restroom_rounded,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ParentLoginScreen()),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              footer(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoleCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final VoidCallback onTap;
+  const _RoleCard({required this.title, required this.subtitle, required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(kRadius),
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(kRadius),
+          border: Border.all(color: kCardBorder),
+          boxShadow: [
+            BoxShadow(
+              color: kBlack.withOpacity(0.04),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: kBlack,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700, color: kBlack)),
+                  const SizedBox(height: 3),
+                  Text(subtitle, style: const TextStyle(fontSize: 12.5, color: kMuted, height: 1.3)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right_rounded, color: kMuted),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// STUDENT LOGIN
+// ============================================================================
+class StudentLoginScreen extends StatefulWidget {
+  const StudentLoginScreen({super.key});
+  @override
+  State<StudentLoginScreen> createState() => _StudentLoginScreenState();
+}
+
+class _StudentLoginScreenState extends State<StudentLoginScreen> {
+  final _name = TextEditingController();
+  final _email = TextEditingController();
+  final _phone = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _continue() async {
+    final name = _name.text.trim();
+    final email = _email.text.trim().toLowerCase();
+    final phone = _phone.text.trim();
+    if (name.isEmpty || email.isEmpty || phone.isEmpty) {
+      setState(() => _error = 'Please fill in all fields');
+      return;
+    }
+    if (!email.contains('@') || !email.contains('.')) {
+      setState(() => _error = 'Please enter a valid email');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
     });
-    await _loadTitles(); await _loadUsage(); await _loadOffline(); await _checkPerm();
+    try {
+      final docRef = FirebaseFirestore.instance.collection('students').doc(email);
+      final snap = await docRef.get();
+      String code;
+      if (snap.exists && snap.data() != null && snap.data()!['code'] != null) {
+        code = snap.data()!['code'].toString();
+      } else {
+        code = (100000 + Random().nextInt(900000)).toString();
+        await docRef.set({
+          'code': code,
+          'email': email,
+          'name': name,
+          'phone': phone,
+          'createdAt': Timestamp.now(),
+          'offlineStudyMs': 0,
+          'totalAppMins': 0,
+        }, SetOptions(merge: true));
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('linkCode', code);
+      await prefs.setString('student_code', code);
+      await prefs.setString('student_email', email);
+      await prefs.setString('student_name', name);
+
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => StudentCodeScreen(code: code)),
+      );
+    } catch (e) {
+      setState(() => _error = 'Something went wrong. Check your internet connection.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
-  Future<void> _loadTitles() async { final prefs = await SharedPreferences.getInstance(); List<String>? saved = prefs.getStringList("history"); if(saved!=null){ setState(()=> titles = saved.map((e){ var p=e.split("|||"); return {"title":p[0],"time":p.length>1?p[1]:"now","type":p.length>2?p[2]:"STUDY"}; }).toList()); } }
-  Future<void> _loadUsage() async { try{ final Map<dynamic,dynamic> res = await channel.invokeMethod("getAllAppsUsage"); Map<String,int> m={}; res.forEach((k,v){ m[k.toString()] = (v as int) ~/ 60000; }); setState(()=> appUsage=m); } catch(e){ try{ final int ms = await channel.invokeMethod("getYoutubeUsage"); setState(()=> appUsage={"com.google.android.youtube": ms~/60000}); } catch(_){} } }
-  Future<void> _loadOffline() async { try{ final int ms = await channel.invokeMethod("getOfflineStudyTime"); setState(()=> offlineMs=ms); } catch(e){ final prefs=await SharedPreferences.getInstance(); setState(()=> offlineMs = prefs.getInt("offline_study_ms") ?? 0); } }
-  Future<void> _checkPerm() async { try{ final bool u = await channel.invokeMethod("hasUsagePermission"); final bool n = await channel.invokeMethod("hasNotifPermission"); setState(()=> {hasUsage=u, hasNotif=n}); } catch(_){} }
-  void _polling(){ poll = Timer.periodic(Duration(seconds:3), (_) async { final prefs = await SharedPreferences.getInstance(); String t = prefs.getString("flutter.last_yt_title") ?? ""; String last = prefs.getString("last_processed_title") ?? ""; if(t.isNotEmpty && t!=last){ await prefs.setString("last_processed_title", t); await _addTitle(t); } await _loadOffline(); await _checkPerm(); }); }
-  Future<void> _addTitle(String title, {bool save=true}) async { if(title.trim().isEmpty) return; String low=title.toLowerCase(); List<String> k=["physics","chemistry","math","biology","neet","jee","ncert","lecture","class","trick","formula","pyq","electrostatics"]; bool isStudy=k.any((x)=> low.contains(x)); String type=isStudy?"STUDY":"DISTRACTION"; String time=DateFormat('hh:mm a').format(DateTime.now()); if(!save){ setState(()=> titles.insert(0, {"title":title,"time":time,"type":type})); return; } final prefs=await SharedPreferences.getInstance(); List<String> saved=prefs.getStringList("history")??[]; saved.insert(0, "\$title|||\$time|||\$type"); if(saved.length>40) saved=saved.sublist(0,40); await prefs.setStringList("history", saved); setState(()=> titles=saved.map((e){ var p=e.split("|||"); return {"title":p[0],"time":p.length>1?p[1]:"now","type":p.length>2?p[2]:"STUDY"}; }).toList()); }
-  Future<void> _clear() async { final prefs=await SharedPreferences.getInstance(); await prefs.remove("history"); await prefs.remove("flutter.last_yt_title"); await prefs.remove("last_processed_title"); setState(()=> titles=[]); }
-  void _toggle(){ if(isStudying){ timer?.cancel(); setState(()=> isStudying=false); } else { setState(()=> isStudying=true); timer=Timer.periodic(Duration(seconds:1), (_)=> setState(()=> studySec++)); } }
-  String _fmt(int s){ int h=s~/3600,m=(s%3600)~/60,sec=s%60; if(h>0) return "\${h}h \${m}m \${sec}s"; if(m>0) return "\${m}m \${sec}s"; return "\${sec}s"; }
-  String _fmtMs(int ms){ int m=ms~/60000,h=m~/60; if(h>0) return "\${h}h \${m%60}m offline"; return "\${m}m offline"; }
-  @override Widget build(BuildContext context){
-    int total = appUsage.values.fold(0, (a,b)=> a+b);
-    return Scaffold(appBar: AppBar(title: Text("Hi, \$studentName"), actions: [IconButton(icon: Icon(Icons.delete), onPressed: _clear)]), body: ListView(padding: EdgeInsets.all(16), children: [
-      if(!hasUsage || !hasNotif) Container(padding: EdgeInsets.all(14), decoration: BoxDecoration(color: Colors.amber.shade100, borderRadius: BorderRadius.circular(14)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [Icon(Icons.warning, size:18), SizedBox(width:6), Text("Permissions needed - tap Grant to open Settings", style: TextStyle(fontWeight: FontWeight.bold, fontSize:13))]),
-        SizedBox(height:8),
-        if(!hasUsage) Row(children: [Expanded(child: Text("Usage Access: for all apps + screen OFF time", style: TextStyle(fontSize:12))), ElevatedButton(onPressed: () async { await channel.invokeMethod("openUsageSettings"); }, child: Text("Grant Usage"))]),
-        SizedBox(height:6),
-        if(!hasNotif) Row(children: [Expanded(child: Text("Notification Access: for YouTube title", style: TextStyle(fontSize:12))), ElevatedButton(onPressed: () async { await channel.invokeMethod("openNotifSettings"); }, child: Text("Grant Notif"))]),
-      ])),
-      if(!hasUsage || !hasNotif) SizedBox(height:12),
-      Container(padding: EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Your Code (permanent)", style: TextStyle(color: Colors.grey, fontSize:11)), Text(linkCode, style: TextStyle(fontSize:30, fontWeight: FontWeight.bold, letterSpacing:3)), Text("Wont change when switching", style: TextStyle(fontSize:10, color: Colors.grey))]),
-        IconButton(onPressed: (){ Clipboard.setData(ClipboardData(text: linkCode)); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Copied \$linkCode"))); }, icon: Icon(Icons.copy), style: IconButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white))
-      ])),
-      SizedBox(height:12),
-      Row(children: [
-        Expanded(child: Container(padding: EdgeInsets.all(16), decoration: BoxDecoration(color: isStudying ? Color(0xFFDCFCE7) : Colors.black, borderRadius: BorderRadius.circular(16)), child: Column(children: [Text(isStudying ? "STUDYING" : "Offline Study", style: TextStyle(color: isStudying ? Colors.green.shade800 : Colors.white70, fontSize:11)), SizedBox(height:6), Text(isStudying ? _fmt(studySec) : _fmtMs(offlineMs), style: TextStyle(color: isStudying ? Colors.green.shade900 : Colors.white, fontWeight: FontWeight.bold, fontSize:16)), SizedBox(height:8), SizedBox(width: double.infinity, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: isStudying ? Colors.red : Colors.white, foregroundColor: isStudying ? Colors.white : Colors.black), onPressed: _toggle, child: Text(isStudying ? "Stop" : "Start Studying")))]))),
-        SizedBox(width:12),
-        Expanded(child: Container(padding: EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Screen OFF = Study", style: TextStyle(fontSize:11, color: Colors.grey)), Text(_fmtMs(offlineMs), style: TextStyle(fontWeight: FontWeight.bold)), SizedBox(height:4), Text("\${total}m total apps today", style: TextStyle(fontSize:11, color: Colors.grey)), SizedBox(height:8), LinearProgressIndicator(value: total>0 ? (offlineMs~/60000)/((offlineMs~/60000)+total) : 0.6, color: Colors.green)]))),
-      ]),
-      SizedBox(height:12),
-      Container(padding: EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("All Apps Usage Today", style: TextStyle(fontWeight: FontWeight.bold)), IconButton(icon: Icon(Icons.refresh, size:18), onPressed: () async { await _loadUsage(); await _loadOffline(); })]),
-        if(appUsage.isEmpty) Text("Grant Usage Access then Refresh", style: TextStyle(fontSize:12, color: Colors.grey))
-        else ...appUsage.entries.take(6).map((e){ String name = e.key.contains("youtube") ? "YouTube" : e.key.contains("instagram") ? "Instagram" : e.key.contains("whatsapp") ? "WhatsApp" : e.key.split(".").last; return Padding(padding: EdgeInsets.only(bottom:6), child: Row(children: [Expanded(child: Text(name)), Text("\${e.value}m")])); }).toList(),
-      ])),
-      SizedBox(height:16),
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("YouTube Titles", style: TextStyle(fontWeight: FontWeight.bold)), TextButton(onPressed: _clear, child: Text("Clear"))]),
-      Container(padding: EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(12)), child: Row(children: [Text("Preview (not saved):", style: TextStyle(fontSize:11, fontWeight: FontWeight.bold)), SizedBox(width:8), ElevatedButton(onPressed: ()=> _addTitle("Electrostatics One Shot", save:false), child: Text("Study", style: TextStyle(fontSize:11))), SizedBox(width:6), ElevatedButton(onPressed: ()=> _addTitle("CARRYMINATI ROAST", save:false), child: Text("Distraction", style: TextStyle(fontSize:11)))])),
-      SizedBox(height:8),
-      if(titles.isEmpty) Container(padding: EdgeInsets.all(28), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)), child: Column(children: [Icon(Icons.ondemand_video, color: Colors.grey.shade300), Text("No titles yet - Play YouTube", style: TextStyle(fontSize:12, color: Colors.grey))]))
-      else ...titles.map((it)=> Container(margin: EdgeInsets.only(bottom:8), padding: EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border(left: BorderSide(width:4, color: it["type"]=="STUDY"? Colors.green : Colors.red))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(it["title"]!, style: TextStyle(fontWeight: FontWeight.bold, fontSize:13)), Row(children: [Text(it["time"]!, style: TextStyle(fontSize:11, color: Colors.grey)), Spacer(), Container(padding: EdgeInsets.symmetric(horizontal:6, vertical:2), decoration: BoxDecoration(color: it["type"]=="STUDY"? Color(0xFFDCFCE7) : Color(0xFFFEE2E2), borderRadius: BorderRadius.circular(8)), child: Text(it["type"]!, style: TextStyle(fontSize:10)))])]))).toList(),
-      SizedBox(height:30),
-      Center(child: Text("© 2026 Dhyaan • Focus, Measured.", style: TextStyle(fontSize:11, color: Colors.grey))),
-    ]));
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Student Login')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Let\'s get you set up',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: kBlack)),
+              const SizedBox(height: 4),
+              const Text('Your parent will use your email + code to link',
+                  style: TextStyle(fontSize: 13, color: kMuted)),
+              const SizedBox(height: 24),
+              TextField(controller: _name, decoration: const InputDecoration(labelText: 'Full Name')),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _email,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Email'),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _phone,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'Phone Number'),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: const TextStyle(color: kRed, fontSize: 13)),
+              ],
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : _continue,
+                  child: _loading
+                      ? const SizedBox(
+                          height: 18, width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Continue'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
-class ParentDashboard extends StatefulWidget { @override State<ParentDashboard> createState()=> _ParentDashboardState(); }
-class _ParentDashboardState extends State<ParentDashboard> {
-  List<Map<String,String>> titles=[]; String linked=""; Map<String,int> appUsage={}; int offlineMs=0; static const channel = MethodChannel("com.dhyaan.app/usage");
-  @override void initState(){ super.initState(); _load(); }
-  Future<void> _load() async { final prefs=await SharedPreferences.getInstance(); linked=prefs.getString("linkedCode") ?? ""; List<String>? saved=prefs.getStringList("history"); if(saved!=null){ setState(()=> titles=saved.map((e){ var p=e.split("|||"); return {"title":p[0],"time":p.length>1?p[1]:"now","type":p.length>2?p[2]:"STUDY"}; }).toList()); } try{ final Map<dynamic,dynamic> res = await channel.invokeMethod("getAllAppsUsage"); Map<String,int> m={}; res.forEach((k,v){ m[k.toString()] = (v as int) ~/60000; }); int off = await channel.invokeMethod("getOfflineStudyTime"); setState(()=> {appUsage=m; offlineMs=off;}); } catch(e){} }
-  @override Widget build(BuildContext context){
-    int study = titles.where((t)=> t["type"]=="STUDY").length; int distract = titles.length-study; int total = appUsage.values.fold(0, (a,b)=> a+b);
-    return Scaffold(appBar: AppBar(title: Text("Parent Report - Full")), body: ListView(padding: EdgeInsets.all(16), children: [
-      Container(padding: EdgeInsets.all(14), decoration: BoxDecoration(color: Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(12)), child: Text("Linked Code: \$linked | Offline Study: \${offlineMs~/60000}m | Total Apps: \${total}m | \$study Study, \$distract Distractions", style: TextStyle(fontSize:12))),
-      SizedBox(height:12),
-      Container(padding: EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text("Aman's Report - Today", style: TextStyle(fontWeight: FontWeight.bold, fontSize:18)),
-        SizedBox(height:8),
-        Row(children: [ _box("YouTube", "\${appUsage["com.google.android.youtube"] ?? 0}m"), SizedBox(width:8), _box("Offline", "\${offlineMs~/60000}m"), SizedBox(width:8), _box("Total", "\${total}m")]),
-        SizedBox(height:12),
-        LinearProgressIndicator(value: titles.isEmpty?0.5:study/titles.length, backgroundColor: Colors.red.shade100, color: Colors.green),
-      ])),
-      SizedBox(height:12),
-      Container(padding: EdgeInsets.all(16), decoration: BoxDecoration(color: Color(0xFFF5F5F5), borderRadius: BorderRadius.circular(16)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("WEEKLY FOCUS", style: TextStyle(fontSize:11, color: Colors.grey, fontWeight: FontWeight.bold)), SizedBox(height:12), Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [ _bar("M",3.2,false), _bar("T",2.1,false), _bar("W",4.5,false), _bar("T",3.8,false), _bar("F",2.9,false), _bar("S",5.1,true), _bar("S",2.2,false)])])),
-      SizedBox(height:12),
-      Text("What Was Studied Today", style: TextStyle(fontWeight: FontWeight.bold)),
-      SizedBox(height:8),
-      ...titles.where((t)=> t["type"]=="STUDY").map((it)=> Container(margin: EdgeInsets.only(bottom:8), padding: EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border(left: BorderSide(width:4, color: Colors.green))), child: Text(it["title"]!, style: TextStyle(fontWeight: FontWeight.bold)))).toList(),
-      SizedBox(height:12),
-      Text("Distractions Detected", style: TextStyle(fontWeight: FontWeight.bold)),
-      SizedBox(height:8),
-      ...titles.where((t)=> t["type"]=="DISTRACTION").map((it)=> Container(margin: EdgeInsets.only(bottom:8), padding: EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border(left: BorderSide(width:4, color: Colors.red))), child: Text(it["title"]!, style: TextStyle(fontWeight: FontWeight.bold)))).toList(),
-      SizedBox(height:12),
-      Text("YouTube History - What Aman Watched Today", style: TextStyle(fontWeight: FontWeight.bold)),
-      SizedBox(height:8),
-      ...titles.map((it)=> Container(margin: EdgeInsets.only(bottom:8), padding: EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)), child: Row(children: [Expanded(child: Text(it["title"]!, style: TextStyle(fontWeight: FontWeight.bold, fontSize:13))), Container(padding: EdgeInsets.symmetric(horizontal:6, vertical:2), decoration: BoxDecoration(color: it["type"]=="STUDY"? Color(0xFFDCFCE7) : Color(0xFFFEE2E2), borderRadius: BorderRadius.circular(8)), child: Text(it["type"]!, style: TextStyle(fontSize:10)))]))).toList(),
-      SizedBox(height:30),
-      Center(child: Text("© 2026 Dhyaan • Focus, Measured.", style: TextStyle(fontSize:11, color: Colors.grey))),
-    ]));
+class StudentCodeScreen extends StatelessWidget {
+  final String code;
+  const StudentCodeScreen({super.key, required this.code});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              const Spacer(),
+              const Icon(Icons.verified_rounded, color: kGreen, size: 56),
+              const SizedBox(height: 20),
+              const Text('Your Permanent Code',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: kBlack)),
+              const SizedBox(height: 6),
+              const Text('Won\'t change when switching', style: TextStyle(fontSize: 13, color: kMuted)),
+              const SizedBox(height: 24),
+              AppCard(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(code,
+                        style: const TextStyle(
+                            fontSize: 32, fontWeight: FontWeight.w800, letterSpacing: 6, color: kBlack)),
+                    const SizedBox(width: 12),
+                    IconButton(
+                      icon: const Icon(Icons.copy_rounded, color: kMuted),
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: code));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Code copied')),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (_) => const StudentDashboard()),
+                    );
+                  },
+                  child: const Text('Go to Dashboard'),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      ),
+    );
   }
-  Widget _box(String k,String v)=> Expanded(child: Container(padding: EdgeInsets.all(10), decoration: BoxDecoration(color: Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)), child: Column(children: [Text(k, style: TextStyle(fontSize:10, color: Colors.grey)), Text(v, style: TextStyle(fontWeight: FontWeight.bold))]))); 
-  Widget _bar(String d,double v,bool isToday){ double h=(v/5.1)*60; return Column(children: [Container(width:22, height:h, decoration: BoxDecoration(color: isToday? Colors.black : Color(0xFF10B981), borderRadius: BorderRadius.circular(6))), SizedBox(height:6), Text(d, style: TextStyle(fontSize:11, fontWeight: isToday? FontWeight.bold : FontWeight.normal))]); }
+}
+
+// ============================================================================
+// STUDENT DASHBOARD
+// ============================================================================
+class StudentDashboard extends StatefulWidget {
+  const StudentDashboard({super.key});
+  @override
+  State<StudentDashboard> createState() => _StudentDashboardState();
+}
+
+class _StudentDashboardState extends State<StudentDashboard> with WidgetsBindingObserver {
+  String code = '';
+  String email = '';
+  String name = '';
+
+  bool hasUsagePermission = false;
+  bool hasNotifPermission = false;
+
+  bool isStudying = false;
+  int studySeconds = 0;
+  Timer? _timerTicker;
+  Timer? _ytPoller;
+  Timer? _permPoller;
+
+  int offlineMs = 0;
+  Map<String, int> appsUsage = {};
+  List<String> ytHistory = []; // "title|||time|||type"
+
+  // Weekly totals - credited natively (see StudyForegroundService.kt), reset
+  // automatically whenever a new week (Monday) starts. Dart just displays
+  // whatever value is currently in prefs.
+  int weekStudyMs = 0;
+  int weekDistractionMs = 0;
+
+  // "During last study session" app-usage breakdown, synced from Firestore
+  // (written natively at the end of each session) for the student's own
+  // visibility, matching what the parent dashboard also shows.
+  Map<String, int> lastSessionAppUsage = {};
+  int lastSessionDurationMins = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _init();
+  }
+
+  Future<void> _init() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      code = prefs.getString('student_code') ?? '';
+      email = prefs.getString('student_email') ?? '';
+      name = prefs.getString('student_name') ?? '';
+      isStudying = prefs.getBool('isStudying') ?? false;
+      studySeconds = prefs.getInt('study_seconds') ?? 0;
+      ytHistory = _decodeYtHistory(prefs.getString('yt_history_raw'));
+      weekStudyMs = prefs.getInt('week_study_ms') ?? 0;
+      weekDistractionMs = prefs.getInt('week_distraction_ms') ?? 0;
+    });
+    await _refreshPermissions();
+    await _refreshAppsUsage();
+    await _refreshOffline();
+    if (isStudying) _startTicker();
+    // Lightweight - just re-reads local prefs so the on-screen list updates
+    // if the app happens to be open while a title comes in. The actual
+    // detection, tagging, and Firestore save all happen natively now (see
+    // DhyaanNotificationListener.kt), so this does no network/Firestore work.
+    _ytPoller = Timer.periodic(const Duration(seconds: 3), (_) => _refreshLocalYtHistory());
+    _permPoller = Timer.periodic(const Duration(seconds: 5), (_) => _refreshPermissions());
+  }
+
+  List<String> _decodeYtHistory(String? raw) {
+    if (raw == null || raw.isEmpty) return [];
+    return raw.split('\n');
+  }
+
+  Future<void> _refreshLocalYtHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final history = _decodeYtHistory(prefs.getString('yt_history_raw'));
+    if (mounted && history.length != ytHistory.length) {
+      setState(() => ytHistory = history);
+    }
+    // Also pick up any weekly-total changes credited natively in the
+    // background since we last checked (e.g. a screen-off study chunk that
+    // just got credited).
+    final newWeekStudy = prefs.getInt('week_study_ms') ?? 0;
+    final newWeekDistraction = prefs.getInt('week_distraction_ms') ?? 0;
+    if (mounted && (newWeekStudy != weekStudyMs || newWeekDistraction != weekDistractionMs)) {
+      setState(() {
+        weekStudyMs = newWeekStudy;
+        weekDistractionMs = newWeekDistraction;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _timerTicker?.cancel();
+    _ytPoller?.cancel();
+    _permPoller?.cancel();
+    super.dispose();
+  }
+
+  // Note: offline-study detection used to live here, watching Dart's own
+  // AppLifecycleState. That only fired while the Dhyaan screen itself was
+  // alive, which isn't reliable - a real student starts a session and then
+  // closes the app entirely. Real screen-on/off detection (and the weekly
+  // crediting that depends on it) now happens natively in
+  // StudyForegroundService.kt, which keeps running regardless. This
+  // callback now just refreshes what's on screen when the student happens
+  // to reopen the app - it doesn't credit anything itself.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
+    if (state == AppLifecycleState.resumed) {
+      await _refreshOffline();
+      await _refreshAppsUsage();
+      await _refreshLocalYtHistory();
+      await _refreshLastSession();
+    }
+  }
+
+  Future<void> _refreshPermissions() async {
+    final u = await NativeBridge.hasUsagePermission();
+    final n = await NativeBridge.hasNotifPermission();
+    if (!mounted) return;
+    setState(() {
+      hasUsagePermission = u;
+      hasNotifPermission = n;
+    });
+  }
+
+  Future<void> _refreshAppsUsage() async {
+    final usage = await NativeBridge.getAllAppsUsage();
+    if (!mounted) return;
+    setState(() => appsUsage = usage);
+    final total = usage.values.fold<int>(0, (a, b) => a + b);
+    final youtubeMins = usage['com.google.android.youtube'] ?? 0;
+    // Just the "All Apps Usage Today" display total - NOT weekly distraction.
+    // Weekly distraction is now tracked natively, scoped specifically to
+    // time spent on apps DURING a study session (see
+    // StudyForegroundService.kt), which is the more meaningful signal and
+    // avoids two different places trying to credit the same weekly number.
+    if (email.isNotEmpty) {
+      FirebaseFirestore.instance.collection('students').doc(email).set(
+        {'totalAppMins': total, 'youtubeMins': youtubeMins},
+        SetOptions(merge: true),
+      ).catchError((_) {});
+    }
+  }
+
+  Future<void> _refreshLastSession() async {
+    if (email.isEmpty) return;
+    try {
+      final doc = await FirebaseFirestore.instance.collection('students').doc(email).get();
+      final data = doc.data();
+      if (data == null || !mounted) return;
+      final rawUsage = data['lastSessionAppUsage'];
+      setState(() {
+        lastSessionAppUsage = rawUsage is Map
+            ? rawUsage.map((k, v) => MapEntry(k.toString(), (v as num).toInt()))
+            : {};
+        lastSessionDurationMins = (data['lastSessionDurationMins'] ?? 0) as int;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _refreshOffline() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() => offlineMs = prefs.getInt('offline_study_ms') ?? 0);
+  }
+
+  void _startTicker() {
+    _timerTicker?.cancel();
+    _timerTicker = Timer.periodic(const Duration(seconds: 1), (_) async {
+      final prefs = await SharedPreferences.getInstance();
+      final startMs = prefs.getInt('study_start_ms');
+      if (startMs != null) {
+        final elapsed = ((DateTime.now().millisecondsSinceEpoch - startMs) / 1000).floor();
+        if (mounted) setState(() => studySeconds = elapsed);
+      }
+    });
+  }
+
+  Future<void> _toggleStudy() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!isStudying) {
+      await prefs.setBool('isStudying', true);
+      await prefs.setInt('study_start_ms', DateTime.now().millisecondsSinceEpoch);
+      await NativeBridge.startStudyService();
+      setState(() {
+        isStudying = true;
+        studySeconds = 0;
+      });
+      _startTicker();
+    } else {
+      await prefs.setBool('isStudying', false);
+      await NativeBridge.stopStudyService();
+      _timerTicker?.cancel();
+      setState(() => isStudying = false);
+      // Native finalizes the session (offline time, weekly credit, and the
+      // per-app "during session" breakdown) right when Stop is tapped - give
+      // it a moment to land in Firestore, then pull the fresh numbers in.
+      await Future.delayed(const Duration(seconds: 2));
+      await _refreshOffline();
+      await _refreshLastSession();
+    }
+  }
+
+  Future<void> _clearHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('yt_history_raw');
+    await prefs.remove('last_processed_title');
+    setState(() => ytHistory = []);
+    if (email.isNotEmpty) {
+      final snap = await FirebaseFirestore.instance
+          .collection('students')
+          .doc(email)
+          .collection('history')
+          .get();
+      final batch = FirebaseFirestore.instance.batch();
+      for (final d in snap.docs) {
+        batch.delete(d.reference);
+      }
+      await batch.commit().catchError((_) {});
+      await FirebaseFirestore.instance
+          .collection('students')
+          .doc(email)
+          .set({'historyCount': 0}, SetOptions(merge: true))
+          .catchError((_) {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final topApps = appsUsage.entries.where((e) => e.value >= 1).toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final totalAppMins = appsUsage.values.fold<int>(0, (a, b) => a + b);
+    final offlineMins = (offlineMs / 60000).floor();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Student Dashboard')),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: () async {
+            await _refreshAppsUsage();
+            await _refreshOffline();
+            await _refreshPermissions();
+          },
+          child: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              if (!hasUsagePermission || !hasNotifPermission) _permissionBanner(),
+              if (!hasUsagePermission || !hasNotifPermission) const SizedBox(height: 16),
+
+              // Code card
+              AppCard(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Hi, $name', style: const TextStyle(fontSize: 13, color: kMuted)),
+                          const SizedBox(height: 4),
+                          Text(code,
+                              style: const TextStyle(
+                                  fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: 4, color: kBlack)),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.copy_rounded, color: kMuted),
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: code));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Code copied')),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Row 2: Study timer + Offline card
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: AppCard(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Study Timer', style: TextStyle(fontSize: 13, color: kMuted)),
+                          const SizedBox(height: 8),
+                          Text(fmtHms(studySeconds),
+                              style: const TextStyle(
+                                  fontSize: 22, fontWeight: FontWeight.w800, color: kBlack)),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: isStudying ? kRed : kGreen,
+                              ),
+                              onPressed: _toggleStudy,
+                              child: Text(isStudying ? 'Stop' : 'Start Studying'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: AppCard(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Offline Study', style: TextStyle(fontSize: 13, color: kMuted)),
+                          const SizedBox(height: 4),
+                          const Text('Screen OFF = Study', style: TextStyle(fontSize: 10, color: kMuted)),
+                          const SizedBox(height: 8),
+                          Text(fmtMinutes(offlineMins),
+                              style: const TextStyle(
+                                  fontSize: 22, fontWeight: FontWeight.w800, color: kBlack)),
+                          const SizedBox(height: 6),
+                          Text('${topApps.length} apps tracked', style: const TextStyle(fontSize: 11, color: kMuted)),
+                          const SizedBox(height: 8),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: LinearProgressIndicator(
+                              value: totalAppMins == 0 ? 0 : (offlineMins / (offlineMins + totalAppMins)).clamp(0, 1),
+                              minHeight: 6,
+                              backgroundColor: kCardBorder,
+                              valueColor: const AlwaysStoppedAnimation(kGreen),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // This Week (resets automatically every Monday)
+              AppCard(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('This Week - Studied', style: TextStyle(fontSize: 11, color: kMuted)),
+                          const SizedBox(height: 4),
+                          Text(fmtMinutes((weekStudyMs / 60000).floor()),
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: kGreen)),
+                        ],
+                      ),
+                    ),
+                    Container(width: 1, height: 32, color: kCardBorder),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('This Week - Distracted', style: TextStyle(fontSize: 11, color: kMuted)),
+                          const SizedBox(height: 4),
+                          Text(fmtMinutes((weekDistractionMs / 60000).floor()),
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: kRed)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // During Last Study Session - which apps were used, and for how
+              // long, WHILE a study session was active (computed natively by
+              // comparing app-usage at session start vs session end).
+              if (lastSessionAppUsage.isNotEmpty) ...[
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SectionTitle('During Last Study Session'),
+                      if (lastSessionDurationMins > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2, bottom: 8),
+                          child: Text('Session length: ${fmtMinutes(lastSessionDurationMins)}',
+                              style: const TextStyle(fontSize: 11, color: kMuted)),
+                        ),
+                      ...(lastSessionAppUsage.entries.toList()..sort((a, b) => b.value.compareTo(a.value)))
+                          .take(6)
+                          .map((e) => Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 5),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Expanded(
+                                        child: Text(e.key,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(fontSize: 13, color: kBlack))),
+                                    Text(fmtMinutes(e.value),
+                                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kRed)),
+                                  ],
+                                ),
+                              )),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              // All Apps Usage Today
+              AppCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const SectionTitle('All Apps Usage Today'),
+                        TextButton.icon(
+                          onPressed: _refreshAppsUsage,
+                          icon: const Icon(Icons.refresh_rounded, size: 16),
+                          label: const Text('Refresh'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (topApps.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text('No usage data yet', style: TextStyle(color: kMuted)),
+                      )
+                    else
+                      ...topApps.take(6).map((e) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                    child: Text(e.key,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 13, color: kBlack))),
+                                Text(fmtMinutes(e.value),
+                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kMuted)),
+                              ],
+                            ),
+                          )),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // YouTube Titles
+              AppCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const SectionTitle('YouTube Titles'),
+                        TextButton(onPressed: _clearHistory, child: const Text('Clear')),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (ytHistory.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text('No titles yet', style: TextStyle(color: kMuted)),
+                      )
+                    else
+                      ...ytHistory.take(10).map((e) {
+                        final parts = e.split('|||');
+                        final title = parts.isNotEmpty ? parts[0] : '';
+                        final time = parts.length > 1 ? parts[1] : '';
+                        final type = parts.length > 2 ? parts[2] : 'DISTRACTION';
+                        return _historyTile(title, time, type);
+                      }),
+                  ],
+                ),
+              ),
+              footer(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _historyTile(String title, String time, String type) {
+    final color = type == 'STUDY' ? kGreen : kRed;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 4),
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontSize: 13, color: kBlack)),
+                Text(time, style: const TextStyle(fontSize: 11, color: kMuted)),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(type, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _permissionBanner() {
+    return AppCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: kRed, size: 20),
+              SizedBox(width: 8),
+              Text('Permissions needed', style: TextStyle(fontWeight: FontWeight.w700, color: kBlack)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (!hasUsagePermission)
+            _permRow('Usage Access', 'Required to track app usage', NativeBridge.openUsageSettings),
+          if (!hasNotifPermission)
+            _permRow('Notification Access', 'Required to detect YouTube titles', NativeBridge.openNotifSettings),
+        ],
+      ),
+    );
+  }
+
+  Widget _permRow(String title, String subtitle, Future<void> Function() onTap) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kBlack)),
+                Text(subtitle, style: const TextStyle(fontSize: 11, color: kMuted)),
+              ],
+            ),
+          ),
+          OutlinedButton(onPressed: onTap, child: const Text('Enable')),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// PARENT LOGIN
+// ============================================================================
+class ParentLoginScreen extends StatefulWidget {
+  const ParentLoginScreen({super.key});
+  @override
+  State<ParentLoginScreen> createState() => _ParentLoginScreenState();
+}
+
+class _ParentLoginScreenState extends State<ParentLoginScreen> {
+  final _email = TextEditingController();
+  final _code = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _link() async {
+    final email = _email.text.trim().toLowerCase();
+    final code = _code.text.trim();
+    if (email.isEmpty || code.isEmpty) {
+      setState(() => _error = 'Please enter both fields');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final doc = await FirebaseFirestore.instance.collection('students').doc(email).get();
+      if (doc.exists && doc.data() != null && doc.data()!['code'].toString() == code) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('linkedCode', code);
+        await prefs.setString('linkedEmail', email);
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => ParentDashboard(email: email, code: code)),
+        );
+      } else {
+        setState(() => _error = 'Invalid email or code');
+      }
+    } catch (e) {
+      setState(() => _error = 'Something went wrong. Check your internet connection.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Parent Login')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Link to your child',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: kBlack)),
+              const SizedBox(height: 4),
+              const Text('Enter the email and code your child shared with you',
+                  style: TextStyle(fontSize: 13, color: kMuted)),
+              const SizedBox(height: 24),
+              TextField(
+                controller: _email,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Child\'s Email'),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _code,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Child\'s Code'),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: const TextStyle(color: kRed, fontSize: 13)),
+              ],
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : _link,
+                  child: _loading
+                      ? const SizedBox(
+                          height: 18, width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Link'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// PARENT DASHBOARD
+// ============================================================================
+class ParentDashboard extends StatelessWidget {
+  final String email;
+  final String code;
+  const ParentDashboard({super.key, required this.email, required this.code});
+
+  @override
+  Widget build(BuildContext context) {
+    final studentDoc = FirebaseFirestore.instance.collection('students').doc(email);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Parent Dashboard')),
+      body: SafeArea(
+        child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: studentDoc.snapshots(),
+          builder: (context, snap) {
+            final data = snap.data?.data() ?? {};
+            final offlineMs = (data['offlineStudyMs'] ?? 0) as int;
+            final totalAppMins = (data['totalAppMins'] ?? 0) as int;
+            final offlineMins = (offlineMs / 60000).floor();
+            final totalMins = offlineMins + totalAppMins;
+            final youtubeMins = (data['youtubeMins'] ?? 0) as int;
+            final weekStudyMins = (data['weekStudyMins'] ?? 0) as int;
+            final weekDistractionMins = (data['weekDistractionMins'] ?? 0) as int;
+            final rawSessionUsage = data['lastSessionAppUsage'];
+            final lastSessionAppUsage = rawSessionUsage is Map
+                ? rawSessionUsage.map((k, v) => MapEntry(k.toString(), (v as num).toInt()))
+                : <String, int>{};
+            final lastSessionDurationMins = (data['lastSessionDurationMins'] ?? 0) as int;
+
+            return ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Linked Code: $code', style: const TextStyle(fontSize: 13, color: kMuted)),
+                      Text(email, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kBlack)),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          _miniStat('Offline', fmtMinutes(offlineMins)),
+                          _miniStat('Total', fmtMinutes(totalMins)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Stats row
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _statBlock('YouTube', fmtMinutes(youtubeMins)),
+                          _statBlock('Offline', fmtMinutes(offlineMins)),
+                          _statBlock('Total', fmtMinutes(totalMins)),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: LinearProgressIndicator(
+                          value: totalMins == 0 ? 0 : (offlineMins / totalMins).clamp(0, 1),
+                          minHeight: 8,
+                          backgroundColor: kCardBorder,
+                          valueColor: const AlwaysStoppedAnimation(kGreen),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // This Week - real totals, resets automatically every Monday
+                AppCard(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('This Week - Studied', style: TextStyle(fontSize: 11, color: kMuted)),
+                            const SizedBox(height: 4),
+                            Text(fmtMinutes(weekStudyMins),
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: kGreen)),
+                          ],
+                        ),
+                      ),
+                      Container(width: 1, height: 32, color: kCardBorder),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('This Week - Distracted', style: TextStyle(fontSize: 11, color: kMuted)),
+                            const SizedBox(height: 4),
+                            Text(fmtMinutes(weekDistractionMins),
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: kRed)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // During Last Study Session - exactly what was requested:
+                // per-student, time-only visibility into which apps were
+                // used and for how long WHILE studying. Never shows video
+                // titles or content - that stays parent/student-only.
+                if (lastSessionAppUsage.isNotEmpty) ...[
+                  AppCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SectionTitle('During Last Study Session'),
+                        if (lastSessionDurationMins > 0)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2, bottom: 8),
+                            child: Text('Session length: ${fmtMinutes(lastSessionDurationMins)}',
+                                style: const TextStyle(fontSize: 11, color: kMuted)),
+                          ),
+                        ...(lastSessionAppUsage.entries.toList()..sort((a, b) => b.value.compareTo(a.value)))
+                            .take(6)
+                            .map((e) => Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 5),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Expanded(
+                                          child: Text(e.key,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(fontSize: 13, color: kBlack))),
+                                      Text(fmtMinutes(e.value),
+                                          style: const TextStyle(
+                                              fontSize: 13, fontWeight: FontWeight.w600, color: kRed)),
+                                    ],
+                                  ),
+                                )),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                // Weekly focus (illustrative day-by-day chart - see README)
+                _weeklyFocusCard(),
+                const SizedBox(height: 16),
+
+                // What was studied today
+                _historySection(
+                  title: 'What Was Studied Today',
+                  query: studentDoc.collection('history').where('type', isEqualTo: 'STUDY').orderBy('createdAt', descending: true).limit(50),
+                  color: kGreen,
+                ),
+                const SizedBox(height: 16),
+
+                _historySection(
+                  title: 'Distractions Detected',
+                  query: studentDoc.collection('history').where('type', isEqualTo: 'DISTRACTION').orderBy('createdAt', descending: true).limit(50),
+                  color: kRed,
+                ),
+                const SizedBox(height: 16),
+
+                _historySection(
+                  title: 'YouTube History',
+                  query: studentDoc.collection('history').orderBy('createdAt', descending: true).limit(50),
+                  color: kMuted,
+                ),
+
+                footer(),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _miniStat(String label, String value) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 11, color: kMuted)),
+          Text(value, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kBlack)),
+        ],
+      ),
+    );
+  }
+
+  Widget _statBlock(String label, String value) {
+    return Column(
+      children: [
+        Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kBlack)),
+        const SizedBox(height: 2),
+        Text(label, style: const TextStyle(fontSize: 11, color: kMuted)),
+      ],
+    );
+  }
+
+  Widget _weeklyFocusCard() {
+    // Illustrative static bars; wire up to real weekly aggregation when available.
+    final days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    final values = [3.2, 2.1, 4.5, 3.8, 2.9, 5.1, 0.0];
+    final todayIndex = DateTime.now().weekday - 1; // 0 = Monday
+    final maxVal = 6.0;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(kRadius),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('WEEKLY FOCUS',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 1, color: kMuted)),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: List.generate(7, (i) {
+              final isToday = i == todayIndex;
+              final h = (values[i] / maxVal * 80).clamp(4.0, 80.0);
+              return Column(
+                children: [
+                  Container(
+                    width: 22,
+                    height: h,
+                    decoration: BoxDecoration(
+                      color: isToday ? kBlack : kGreen,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(days[i], style: TextStyle(fontSize: 11, color: isToday ? kBlack : kMuted, fontWeight: isToday ? FontWeight.w700 : FontWeight.w400)),
+                ],
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _historySection({
+    required String title,
+    required Query<Map<String, dynamic>> query,
+    required Color color,
+  }) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionTitle(title),
+          const SizedBox(height: 8),
+          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: query.snapshots(),
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                );
+              }
+              final docs = snap.data?.docs ?? [];
+              if (docs.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('No titles yet', style: TextStyle(color: kMuted)),
+                );
+              }
+              return Column(
+                children: docs.take(20).map((d) {
+                  final data = d.data();
+                  final t = (data['title'] ?? '').toString();
+                  final time = (data['time'] ?? '').toString();
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          margin: const EdgeInsets.only(top: 5),
+                          width: 8, height: 8,
+                          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(t, style: const TextStyle(fontSize: 13, color: kBlack)),
+                              Text(time, style: const TextStyle(fontSize: 11, color: kMuted)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
 }

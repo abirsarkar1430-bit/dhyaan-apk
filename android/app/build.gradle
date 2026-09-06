@@ -1,8 +1,8 @@
-
 plugins {
     id "com.android.application"
     id "kotlin-android"
     id "dev.flutter.flutter-gradle-plugin"
+    id "com.google.gms.google-services"
 }
 
 def localProperties = new Properties()
@@ -14,31 +14,60 @@ if (localPropertiesFile.exists()) {
 }
 
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-if (flutterVersionCode == null) { flutterVersionCode = '1' }
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
 
 def flutterVersionName = localProperties.getProperty('flutter.versionName')
-if (flutterVersionName == null) { flutterVersionName = '1.0' }
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0.0'
+}
 
 android {
     namespace "com.dhyaan.app"
     compileSdk 34
     ndkVersion flutter.ndkVersion
+
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = '1.8' }
-    sourceSets { main.java.srcDirs += 'src/main/kotlin' }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
     defaultConfig {
         applicationId "com.dhyaan.app"
-        minSdkVersion 21
+        minSdkVersion 24
         targetSdkVersion 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
+        multiDexEnabled true
     }
+
     buildTypes {
-        release { signingConfig signingConfigs.debug }
+        release {
+            // Using debug signing config for a $0-budget CI build.
+            // Replace with your own keystore/signingConfig before a Play Store release.
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
+        }
     }
 }
 
-flutter { source '../..' }
+flutter {
+    source '../..'
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    implementation platform('com.google.firebase:firebase-bom:32.7.4')
+    implementation 'com.google.firebase:firebase-firestore'
+    implementation 'androidx.multidex:multidex:2.0.1'
+}
