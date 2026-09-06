@@ -2,7 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:device_apps/device_apps.dart';
+// removed
 import 'package:intl/intl.dart';
 
 void main() => runApp(DhyaanApp());
@@ -160,7 +160,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
 
   Future<void> _checkDualApp() async {
     try{
-      List<Application> apps = await DeviceApps.getInstalledApplications(includeSystemApps: true);
+      List<Application> apps = await //DeviceApps.getInstalledApplications(includeSystemApps: true);
       int count = apps.where((a)=> a.packageName.toLowerCase().contains("youtube") || a.appName.toLowerCase().contains("youtube")).length;
       setState((){ dualAppCount = count; });
     }catch(e){}
