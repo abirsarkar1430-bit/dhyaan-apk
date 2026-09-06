@@ -254,37 +254,14 @@ class RoleSelectScreen extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Focus mark: a target/bullseye motif tying the wordmark to "Focus, Measured."
-                      Container(
-                        width: 46,
-                        height: 46,
-                        decoration: BoxDecoration(
-                          color: kBlack,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Center(
-                          child: Container(
-                            width: 20,
-                            height: 20,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 1.6),
-                            ),
-                            child: Center(
-                              child: Container(
-                                width: 7,
-                                height: 7,
-                                decoration: const BoxDecoration(color: kGreen, shape: BoxShape.circle),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
+                      // Real logo mark
+                      Image.asset('assets/images/dhyaan_mark.png', width: 60, height: 60),
                       const SizedBox(height: 18),
                       const Text('Dhyaan',
                           style: TextStyle(
-                              fontSize: 34,
-                              fontWeight: FontWeight.w800,
+                              fontSize: 36,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'serif',
                               letterSpacing: -0.5,
                               height: 1.0,
                               color: kBlack)),

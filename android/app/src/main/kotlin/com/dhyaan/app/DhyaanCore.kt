@@ -35,7 +35,7 @@ object DhyaanCore {
     }
 
     fun studentDoc(context: Context) =
-        studentEmail(context)?.let { FirebaseFirestore.getInstance().collection("students").doc(it) }
+        studentEmail(context)?.let { FirebaseFirestore.getInstance().collection("students").document(it) }
 
     // ------------------------------------------------------------------
     // Weekly rollover ("This Week - Studied/Distracted" reset every Monday)
