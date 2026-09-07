@@ -94,6 +94,30 @@ class NativeBridge {
       await _channel.invokeMethod('stopStudyService');
     } catch (_) {}
   }
+
+  // Returns friendly names of known clone/dual-space apps found installed
+  // (e.g. "Parallel Space"). Empty list means none of the KNOWN ones were
+  // found - see CloneAppDetector.kt for why this can't cover every case
+  // (phone-brand built-in dual-app features are architecturally invisible
+  // to any regular app, not just this one).
+  static Future<List<String>> checkCloneApps() async {
+    try {
+      final result = await _channel.invokeMethod('checkCloneApps');
+      if (result == null) return [];
+      return List<String>.from(result as List);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<String> getDeviceBrand() async {
+    try {
+      final result = await _channel.invokeMethod('getDeviceBrand');
+      return (result as String?) ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
 }
 
 // ============================================================================
@@ -232,6 +256,116 @@ String fmtHms(int totalSeconds) {
   final m = (totalSeconds % 3600) ~/ 60;
   final s = totalSeconds % 60;
   return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+}
+
+// 'yyyy-MM-dd' key matching the native side's SimpleDateFormat("yyyy-MM-dd")
+// used for daily stats document IDs. Written by hand rather than pulling in
+// the intl package just for this one format.
+String _dateKey(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+// ============================================================================
+// FRIENDLY APP NAMES
+// Android restricts querying "what's every app on this phone called" since
+// Android 11 (the QUERY_ALL_PACKAGES permission) - and Google Play scrutinizes
+// that permission heavily, which isn't worth the risk for a monitoring-category
+// app that already gets extra review attention. Instead: a lookup table of
+// ~35 well-known apps students commonly use. Anything not in this list just
+// shows its raw package name (e.g. "com.some.obscure.app") rather than a
+// guessed-and-possibly-wrong friendly name - a correct technical name beats
+// a confident-looking wrong one.
+// ============================================================================
+const Map<String, String> kFriendlyAppNames = {
+  // Social / messaging
+  'com.whatsapp': 'WhatsApp',
+  'com.instagram.android': 'Instagram',
+  'com.facebook.katana': 'Facebook',
+  'com.facebook.orca': 'Messenger',
+  'com.snapchat.android': 'Snapchat',
+  'org.telegram.messenger': 'Telegram',
+  'com.twitter.android': 'X (Twitter)',
+  'com.discord': 'Discord',
+  'com.zhiliaoapp.musically': 'TikTok',
+  'com.linkedin.android': 'LinkedIn',
+  'com.pinterest': 'Pinterest',
+  'com.reddit.frontpage': 'Reddit',
+  // Google apps
+  'com.google.android.youtube': 'YouTube',
+  'com.android.chrome': 'Chrome',
+  'com.google.android.gm': 'Gmail',
+  'com.google.android.apps.maps': 'Google Maps',
+  'com.google.android.googlequicksearchbox': 'Google App',
+  'com.google.android.apps.docs': 'Google Drive',
+  'com.android.vending': 'Google Play Store',
+  'com.google.android.apps.youtube.music': 'YouTube Music',
+  'com.google.android.calendar': 'Google Calendar',
+  'com.google.android.keep': 'Google Keep',
+  // Entertainment / streaming
+  'com.netflix.mediaclient': 'Netflix',
+  'com.spotify.music': 'Spotify',
+  'in.startv.hotstar': 'Disney+ Hotstar',
+  'com.amazon.avod.thirdpartyclient': 'Prime Video',
+  'com.jio.jioplay.tv': 'JioTV',
+  // Gaming
+  'com.pubg.imobile': 'BGMI',
+  'com.dts.freefireth': 'Free Fire',
+  'com.supercell.clashofclans': 'Clash of Clans',
+  'com.supercell.clashroyale': 'Clash Royale',
+  'com.king.candycrushsaga': 'Candy Crush Saga',
+  'com.roblox.client': 'Roblox',
+  'com.mojang.minecraftpe': 'Minecraft',
+  // Other common apps
+  'com.ubercab': 'Uber',
+  'in.amazon.mShop.android.shopping': 'Amazon Shopping',
+  'com.flipkart.android': 'Flipkart',
+  'net.one97.paytm': 'Paytm',
+  'com.phonepe.app': 'PhonePe',
+};
+
+/// Returns the friendly name for a known app package, or the raw package
+/// name unchanged if it's not in the list - never a guessed name.
+String friendlyAppName(String packageName) => kFriendlyAppNames[packageName] ?? packageName;
+
+// ============================================================================
+// BRAND-AWARE DUAL-APP GUIDANCE
+// We can't see INTO a phone brand's built-in dual-app space (that's a real
+// OS-level wall, not a gap we can code around - see CloneAppDetector.kt).
+// What we CAN do is tell the parent/student exactly what that brand calls
+// the feature and roughly where to check for it themselves, instead of a
+// generic "we can't see everything" shrug.
+// ============================================================================
+class BrandDualAppInfo {
+  final String featureName;
+  final String whereToCheck;
+  const BrandDualAppInfo(this.featureName, this.whereToCheck);
+}
+
+BrandDualAppInfo? brandDualAppInfo(String rawBrand) {
+  final b = rawBrand.toLowerCase();
+  if (b.contains('xiaomi') || b.contains('redmi') || b.contains('poco')) {
+    return const BrandDualAppInfo('Dual Apps', 'Settings > Apps > Dual Apps');
+  }
+  if (b.contains('samsung')) {
+    return const BrandDualAppInfo(
+        'Dual Messenger / Secure Folder',
+        'Settings > Advanced features > Dual Messenger, or Settings > Security and privacy > Secure Folder');
+  }
+  if (b.contains('oppo')) {
+    return const BrandDualAppInfo('Clone Apps', 'Settings > App management > Clone Apps (or Additional Settings > Clone Apps)');
+  }
+  if (b.contains('vivo')) {
+    return const BrandDualAppInfo('App Clone', 'Settings > System Manager > App Clone (or More Settings > App Clone)');
+  }
+  if (b.contains('realme')) {
+    return const BrandDualAppInfo('App Cloner', 'Settings > App Management > App Cloner');
+  }
+  if (b.contains('oneplus')) {
+    return const BrandDualAppInfo('Parallel Apps', 'Settings > Utilities > Parallel Apps (may be under Special Features on newer models)');
+  }
+  if (b.contains('huawei') || b.contains('honor')) {
+    return const BrandDualAppInfo('App Twin', 'Settings > Apps > App Twin');
+  }
+  return null; // Unknown brand, or one with no widely-known built-in dual-app feature.
 }
 
 // ============================================================================
@@ -429,7 +563,7 @@ class _StudentLoginScreenState extends State<StudentLoginScreen> {
         MaterialPageRoute(builder: (_) => StudentCodeScreen(code: code)),
       );
     } catch (e) {
-      setState(() => _error = 'Something went wrong. Check your internet connection.');
+      setState(() => _error = 'Could not reach Firebase: $e. If this is your first run, check that you replaced android/app/google-services.json with your real Firebase file (see README).');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -589,6 +723,12 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
   Map<String, int> lastSessionAppUsage = {};
   int lastSessionDurationMins = 0;
 
+  // Clone/dual-space app check - see CloneAppDetector.kt for exactly what
+  // this can and can't see.
+  List<String> cloneAppsFound = [];
+  bool cloneCheckDone = false;
+  String deviceBrand = '';
+
   @override
   void initState() {
     super.initState();
@@ -611,6 +751,8 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
     await _refreshPermissions();
     await _refreshAppsUsage();
     await _refreshOffline();
+    await _refreshLastSession();
+    await _checkCloneApps();
     if (isStudying) _startTicker();
     // Lightweight - just re-reads local prefs so the on-screen list updates
     // if the app happens to be open while a title comes in. The actual
@@ -618,6 +760,29 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
     // DhyaanNotificationListener.kt), so this does no network/Firestore work.
     _ytPoller = Timer.periodic(const Duration(seconds: 3), (_) => _refreshLocalYtHistory());
     _permPoller = Timer.periodic(const Duration(seconds: 5), (_) => _refreshPermissions());
+  }
+
+  // Checks for known clone/dual-space apps AND the device brand (so we can
+  // give brand-specific guidance about built-in dual-app features we can't
+  // see into) and syncs both to Firestore so the parent dashboard sees them
+  // too. Installed apps and device brand don't change mid-session, so this
+  // only needs to run once per app open (plus pull-to-refresh), not on a timer.
+  Future<void> _checkCloneApps() async {
+    final found = await NativeBridge.checkCloneApps();
+    final brand = await NativeBridge.getDeviceBrand();
+    if (mounted) {
+      setState(() {
+        cloneAppsFound = found;
+        deviceBrand = brand;
+        cloneCheckDone = true;
+      });
+    }
+    if (email.isNotEmpty) {
+      FirebaseFirestore.instance.collection('students').doc(email).set(
+        {'cloneAppsDetected': found, 'deviceBrand': brand},
+        SetOptions(merge: true),
+      ).catchError((_) {});
+    }
   }
 
   List<String> _decodeYtHistory(String? raw) {
@@ -954,7 +1119,7 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
                                     Expanded(
-                                        child: Text(e.key,
+                                        child: Text(friendlyAppName(e.key),
                                             overflow: TextOverflow.ellipsis,
                                             style: const TextStyle(fontSize: 13, color: kBlack))),
                                     Text(fmtMinutes(e.value),
@@ -962,6 +1127,62 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
                                   ],
                                 ),
                               )),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              // Clone/dual-space app check
+              if (cloneCheckDone) ...[
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SectionTitle('Dual / Cloned App Check'),
+                      const SizedBox(height: 8),
+                      if (cloneAppsFound.isEmpty)
+                        const Text('No cloning apps detected among the common ones we check for.',
+                            style: TextStyle(fontSize: 13, color: kBlack))
+                      else
+                        ...cloneAppsFound.map((name) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 3),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.warning_amber_rounded, color: kRed, size: 16),
+                                  const SizedBox(width: 8),
+                                  Text(name, style: const TextStyle(fontSize: 13, color: kBlack)),
+                                ],
+                              ),
+                            )),
+                      const SizedBox(height: 8),
+                      Builder(builder: (context) {
+                        final info = brandDualAppInfo(deviceBrand);
+                        if (info != null) {
+                          return Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF7ED),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFFFDBA74)),
+                            ),
+                            child: Text(
+                              'This is a ${deviceBrand.isEmpty ? "" : deviceBrand} phone, which has a '
+                              'built-in "${info.featureName}" feature we cannot see into - that\'s a '
+                              'limit of what any regular app is allowed to see on Android, not '
+                              'something that can be fixed in code. Check yourself: ${info.whereToCheck}.',
+                              style: const TextStyle(fontSize: 11.5, color: Color(0xFF7C2D12), height: 1.3),
+                            ),
+                          );
+                        }
+                        return const Text(
+                          'Note: some phone brands (Xiaomi, Samsung, Oppo, Vivo) have a built-in '
+                          '"Dual Apps" / "App Clone" / "Secure Folder" feature that creates a fully '
+                          'separate copy this check cannot see at all - that\'s a limit of what any '
+                          'regular app is allowed to see on Android, not something we can fix in code.',
+                          style: TextStyle(fontSize: 11, color: kMuted, height: 1.3),
+                        );
+                      }),
                     ],
                   ),
                 ),
@@ -997,7 +1218,7 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Expanded(
-                                    child: Text(e.key,
+                                    child: Text(friendlyAppName(e.key),
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(fontSize: 13, color: kBlack))),
                                 Text(fmtMinutes(e.value),
@@ -1168,7 +1389,7 @@ class _ParentLoginScreenState extends State<ParentLoginScreen> {
         setState(() => _error = 'Invalid email or code');
       }
     } catch (e) {
-      setState(() => _error = 'Something went wrong. Check your internet connection.');
+      setState(() => _error = 'Could not reach Firebase: $e. If this is your first run, check that you replaced android/app/google-services.json with your real Firebase file (see README).');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -1256,6 +1477,9 @@ class ParentDashboard extends StatelessWidget {
                 ? rawSessionUsage.map((k, v) => MapEntry(k.toString(), (v as num).toInt()))
                 : <String, int>{};
             final lastSessionDurationMins = (data['lastSessionDurationMins'] ?? 0) as int;
+            final rawCloneApps = data['cloneAppsDetected'];
+            final cloneAppsDetected = rawCloneApps is List ? List<String>.from(rawCloneApps) : <String>[];
+            final deviceBrand = (data['deviceBrand'] ?? '') as String;
 
             return ListView(
               padding: const EdgeInsets.all(20),
@@ -1339,6 +1563,62 @@ class ParentDashboard extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
 
+                // Clone/dual-space app check
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SectionTitle('Dual / Cloned App Check'),
+                      const SizedBox(height: 8),
+                      if (cloneAppsDetected.isEmpty)
+                        const Text('No cloning apps detected among the common ones we check for.',
+                            style: TextStyle(fontSize: 13, color: kBlack))
+                      else
+                        ...cloneAppsDetected.map((name) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 3),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.warning_amber_rounded, color: kRed, size: 16),
+                                  const SizedBox(width: 8),
+                                  Text(name, style: const TextStyle(fontSize: 13, color: kBlack)),
+                                ],
+                              ),
+                            )),
+                      const SizedBox(height: 8),
+                      Builder(builder: (context) {
+                        final info = brandDualAppInfo(deviceBrand);
+                        if (info != null) {
+                          return Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF7ED),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFFFDBA74)),
+                            ),
+                            child: Text(
+                              'This is a ${deviceBrand.isEmpty ? "" : deviceBrand} phone, which has a '
+                              'built-in "${info.featureName}" feature we cannot see into - that\'s a '
+                              'limit of what any regular app is allowed to see on Android, not '
+                              'something that can be fixed in code. Have your child check: '
+                              '${info.whereToCheck}.',
+                              style: const TextStyle(fontSize: 11.5, color: Color(0xFF7C2D12), height: 1.3),
+                            ),
+                          );
+                        }
+                        return const Text(
+                          'Note: some phone brands (Xiaomi, Samsung, Oppo, Vivo) have a built-in '
+                          '"Dual Apps" / "App Clone" / "Secure Folder" feature that creates a fully '
+                          'separate copy this check cannot see at all - that\'s a limit of what any '
+                          'regular app is allowed to see on Android, not something that can be fixed '
+                          'in code.',
+                          style: TextStyle(fontSize: 11, color: kMuted, height: 1.3),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
                 // During Last Study Session - exactly what was requested:
                 // per-student, time-only visibility into which apps were
                 // used and for how long WHILE studying. Never shows video
@@ -1363,7 +1643,7 @@ class ParentDashboard extends StatelessWidget {
                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
                                       Expanded(
-                                          child: Text(e.key,
+                                          child: Text(friendlyAppName(e.key),
                                               overflow: TextOverflow.ellipsis,
                                               style: const TextStyle(fontSize: 13, color: kBlack))),
                                       Text(fmtMinutes(e.value),
@@ -1435,48 +1715,70 @@ class ParentDashboard extends StatelessWidget {
   }
 
   Widget _weeklyFocusCard() {
-    // Illustrative static bars; wire up to real weekly aggregation when available.
-    final days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-    final values = [3.2, 2.1, 4.5, 3.8, 2.9, 5.1, 0.0];
-    final todayIndex = DateTime.now().weekday - 1; // 0 = Monday
-    final maxVal = 6.0;
+    final dailyStatsRef = FirebaseFirestore.instance.collection('students').doc(email).collection('dailyStats');
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF5F5F5),
-        borderRadius: BorderRadius.circular(kRadius),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('WEEKLY FOCUS',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 1, color: kMuted)),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: List.generate(7, (i) {
-              final isToday = i == todayIndex;
-              final h = (values[i] / maxVal * 80).clamp(4.0, 80.0);
-              return Column(
-                children: [
-                  Container(
-                    width: 22,
-                    height: h,
-                    decoration: BoxDecoration(
-                      color: isToday ? kBlack : kGreen,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(days[i], style: TextStyle(fontSize: 11, color: isToday ? kBlack : kMuted, fontWeight: isToday ? FontWeight.w700 : FontWeight.w400)),
-                ],
-              );
-            }),
+    // Last 7 calendar days, oldest first, ending today - a real rolling
+    // trend rather than a fixed Monday-start week. A day with no recorded
+    // session simply has no document, which correctly reads as 0 below.
+    final now = DateTime.now();
+    final dates = List.generate(7, (i) => DateTime(now.year, now.month, now.day).subtract(Duration(days: 6 - i)));
+    final dateKeys = dates.map(_dateKey).toList();
+    const dayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S']; // Monday=1..Sunday=7
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: dailyStatsRef.where(FieldPath.documentId, whereIn: dateKeys).snapshots(),
+      builder: (context, snap) {
+        final studyHoursByDate = <String, double>{};
+        for (final doc in snap.data?.docs ?? <QueryDocumentSnapshot<Map<String, dynamic>>>[]) {
+          final studyMs = (doc.data()['studyMs'] ?? 0) as int;
+          studyHoursByDate[doc.id] = studyMs / 3600000.0;
+        }
+
+        const maxHours = 8.0; // reasonable ceiling for a full day of study
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(kRadius),
           ),
-        ],
-      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('WEEKLY FOCUS',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 1, color: kMuted)),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: List.generate(7, (i) {
+                  final isToday = i == 6; // last item is always today, since the list ends today
+                  final hours = studyHoursByDate[dateKeys[i]] ?? 0.0;
+                  final h = (hours / maxHours * 80).clamp(4.0, 80.0);
+                  final weekdayLetter = dayLetters[dates[i].weekday - 1];
+                  return Column(
+                    children: [
+                      Container(
+                        width: 22,
+                        height: h,
+                        decoration: BoxDecoration(
+                          color: isToday ? kBlack : kGreen,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(weekdayLetter,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: isToday ? kBlack : kMuted,
+                              fontWeight: isToday ? FontWeight.w700 : FontWeight.w400)),
+                    ],
+                  );
+                }),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

@@ -123,6 +123,38 @@ Two things NOT covered, since they're security/abuse concerns rather than
   everyone. Not a concern at pilot scale; worth revisiting before scaling
   past a small trusted group.
 
+## Dual / Cloned App Check (new)
+
+Both dashboards now show a **"Dual / Cloned App Check"** card - checking the
+device for known third-party clone/dual-space apps (Parallel Space, Dual
+Space, App Cloner, Island, etc.) that let a student run a second, hidden
+copy of an app like WhatsApp or Instagram.
+
+**What this can and can't see, stated plainly rather than overclaimed:**
+- **Can detect:** standalone clone-container apps, since those install as
+  normal, visible apps and this check just looks for their known package
+  names.
+- **Cannot detect:** a phone brand's own *built-in* dual-app feature -
+  Xiaomi/MIUI "Dual Apps," Samsung "Dual Messenger" or "Secure Folder,"
+  Oppo/Vivo "App Clone." Those create the second copy inside a separate,
+  walled-off Android user profile that no regular app - this one included -
+  is allowed to see. That's Android's security model working as intended,
+  not a bug to fix later. The UI says this explicitly rather than implying
+  a clean "no dual apps" result covers every case.
+
+This required no new Firebase setup - it just adds one more field
+(`cloneAppsDetected`) to the same `students/{email}` document everything
+else already writes to.
+
+**Brand-aware guidance (new):** since the app genuinely cannot see inside a
+phone's built-in dual-app space, it now at least names it precisely. It
+reads the device manufacturer (`Build.MANUFACTURER`) and, for known brands,
+shows the exact feature name and where to find it - e.g. "This is a Xiaomi
+phone, which has a built-in 'Dual Apps' feature we cannot see into. Check:
+Settings > Apps > Dual Apps." Covers Xiaomi/Redmi/POCO, Samsung, Oppo,
+Vivo, Realme, OnePlus, and Huawei/Honor - the brand -> feature-name mapping
+lives in one place in Dart (`brandDualAppInfo`) if it ever needs updating.
+
 ## Weekly totals (new)
 
 Both dashboards now show **"This Week - Studied"** and **"This Week -
@@ -141,12 +173,15 @@ anything new.
   already been counted and only adds the difference each time - otherwise
   the same minutes would get added again every refresh.
 
-**Known limitation, flagged honestly:** this gives you one accurate number
-for "the whole week so far," but not a day-by-day breakdown. The "WEEKLY
-FOCUS" bar chart on the parent dashboard is still the illustrative static
-data mentioned earlier - building a real per-day trend chart would need the
-app to save a small snapshot once every day (not built yet, but a natural
-next step if you want that view later).
+**Update - this is now real, not illustrative.** Each screen-off study chunk
+and each distraction-during-session chunk is now also saved into a small
+per-day record (`students/{email}/dailyStats/{yyyy-MM-dd}`, atomically
+incremented, no read needed to write it). The parent dashboard's "WEEKLY
+FOCUS" chart pulls the last 7 of these specific day-documents in realtime
+and renders actual bars from them - a day with no study session simply has
+no document and correctly shows as zero, rather than a fake placeholder
+number. Cost stays cheap: at most 7 small document reads, only when the
+parent's dashboard is open, never a full collection scan.
 
 ## Major architecture change: tracking now survives the app being closed
 
@@ -196,11 +231,16 @@ session was active," not generic all-day phone usage - a more meaningful
 number for exactly the reason you raised it (institutes wanting to see
 distraction during claimed study time).
 
-**Known limitation, flagged honestly:** app names currently show as their
-raw Android package name (e.g. `com.instagram.android`) rather than a
-friendly name like "Instagram." Mapping that requires either a small
-lookup table or reading it from the device's app list - not built yet,
-easy to add later if it matters for how this looks to parents/institutes.
+**Update - friendly names now shown for ~35 common apps.** Android
+restricts querying every installed app's name since Android 11 (the
+`QUERY_ALL_PACKAGES` permission), and that permission draws heavy Play
+Store scrutiny - not worth adding for a monitoring-category app that
+already gets extra review attention. Instead, `kFriendlyAppNames` in
+`main.dart` maps ~35 well-known apps (WhatsApp, Instagram, YouTube, BGMI,
+Free Fire, and so on) to their real names. Anything not in that list still
+shows its raw package name rather than a guessed name - a correct
+technical name beats a confident-looking wrong one. Easy to extend the list
+later if a commonly-used app is missing.
 
 ## ⚠️ This is the highest-risk part of the whole build - please test it deliberately
 

@@ -19,7 +19,7 @@
          Settings (ACTION_USAGE_ACCESS_SETTINGS), it must NOT be declared here. -->
 
     <application
-        android:label="Dhyaan - Padhai ka Sach"
+        android:label="Dhyaan"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 

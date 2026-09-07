@@ -3,6 +3,7 @@ package com.dhyaan.app
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.SharedPreferences
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import java.text.SimpleDateFormat
@@ -91,6 +92,7 @@ object DhyaanCore {
             mapOf("weekStudyMins" to (newMs / 60000L).toInt()),
             SetOptions.merge()
         )
+        creditDailyMs(context, isStudy = true, addMs = addMs)
     }
 
     fun creditWeeklyDistractionMs(context: Context, addMs: Long) {
@@ -101,6 +103,29 @@ object DhyaanCore {
         p.edit().putLong(PREFIX + "week_distraction_ms", newMs).apply()
         studentDoc(context)?.set(
             mapOf("weekDistractionMins" to (newMs / 60000L).toInt()),
+            SetOptions.merge()
+        )
+        creditDailyMs(context, isStudy = false, addMs = addMs)
+    }
+
+    /**
+     * Real per-day history behind the "Weekly Focus" chart - previously
+     * static/fake demo numbers. Each day gets its own small document
+     * (students/{email}/dailyStats/{yyyy-MM-dd}) with an atomically
+     * incremented studyMs/distractionMs field - cheap to write (no read
+     * needed for increment) and cheap to read later (the parent dashboard
+     * fetches at most the last 7 of these specific documents, never a full
+     * collection scan, same cost discipline as everything else in this app).
+     * A day with no study session simply has no document - correctly reads
+     * as zero for that day rather than needing an explicit "no activity" record.
+     */
+    private fun creditDailyMs(context: Context, isStudy: Boolean, addMs: Long) {
+        if (addMs <= 0) return
+        val doc = studentDoc(context) ?: return
+        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val field = if (isStudy) "studyMs" else "distractionMs"
+        doc.collection("dailyStats").document(dateStr).set(
+            mapOf(field to FieldValue.increment(addMs)),
             SetOptions.merge()
         )
     }
@@ -243,3 +268,76 @@ object TitleTagger {
         return "DISTRACTION"
     }
 }
+
+/**
+ * Checks for known third-party "app cloning" / "dual space" tools that let a
+ * student run a second, separate copy of an app (e.g. a second WhatsApp or
+ * Instagram) that this app has no visibility into.
+ *
+ * IMPORTANT - scope of what this can and can't see, stated honestly rather
+ * than implied to be complete:
+ *  - CAN detect: standalone clone-container apps (Parallel Space, Dual
+ *    Space, App Cloner, Island, etc.) IF they're installed as a normal app
+ *    in the same profile - which is how all of these actually work.
+ *  - CANNOT detect: a phone brand's own built-in dual-app feature (e.g.
+ *    Xiaomi/MIUI "Dual Apps," Samsung "Dual Messenger," Oppo/Vivo "App
+ *    Clone," Samsung "Secure Folder"). Those create the second copy inside
+ *    a separate, walled-off Android user profile that a normal app is
+ *    architecturally not allowed to see - this isn't a gap we can code
+ *    around, it's Android's security model working as intended. The UI
+ *    that surfaces this result says so explicitly, rather than implying
+ *    "no dual apps found" covers every possible case.
+ */
+object CloneAppDetector {
+
+    // Best-effort list of known clone/dual-space app package names. Not
+    // exhaustive - new clone apps appear over time - but covers the most
+    // commonly used ones as of when this was written.
+    private val KNOWN_CLONE_APPS = mapOf(
+        "com.lbe.parallel" to "Parallel Space",
+        "com.lbe.parallel.intl" to "Parallel Space Lite",
+        "com.excelliance.dualaid" to "Dual Space",
+        "com.excean.parallelspace" to "Dual Space Lite",
+        "com.applisto.appcloner" to "App Cloner",
+        "com.oasisfeng.island" to "Island (App Cloner/Isolator)",
+        "com.jiubang.go.music.parallel" to "GO Multiple",
+        "com.dual.space.multiple.accounts" to "Multi Parallel Space",
+        "com.dualapp.multiple.accounts.cloner" to "Dual App Cloner",
+        "com.clone.app.multiple.accounts" to "Clone App",
+        "com.hicore.multiparallel" to "Multi Parallel",
+        "com.orbit.multipleaccounts.dualspace" to "Orbit Dual Space",
+        "com.leo.appmaster" to "LEO Parallel/App Master"
+    )
+
+    /**
+     * Returns the friendly names of any known clone/dual-space apps found
+     * installed on the device. Empty list means none of the KNOWN ones were
+     * found - it does NOT mean "no dual apps of any kind exist" (see class
+     * doc for why).
+     */
+    fun detectInstalledCloneApps(context: Context): List<String> {
+        val pm = context.packageManager
+        val found = mutableListOf<String>()
+        for ((packageName, friendlyName) in KNOWN_CLONE_APPS) {
+            try {
+                pm.getPackageInfo(packageName, 0)
+                found.add(friendlyName)
+            } catch (e: Exception) {
+                // Not installed - expected for most of these, not an error.
+            }
+        }
+        return found
+    }
+}
+
+/**
+ * Returns the raw manufacturer string (e.g. "Xiaomi", "samsung", "OPPO") so
+ * Dart can map it to that brand's specific built-in dual-app feature name
+ * and where to find it in Settings. Kept as a thin native call - the actual
+ * brand -> feature-name mapping lives in Dart (DEVICE_BRAND_INFO) so it's
+ * one place to update, not duplicated across languages.
+ */
+object DeviceInfo {
+    fun manufacturer(): String = android.os.Build.MANUFACTURER
+}
+

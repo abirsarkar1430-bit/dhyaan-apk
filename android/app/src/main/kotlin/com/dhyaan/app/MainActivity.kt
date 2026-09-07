@@ -53,6 +53,8 @@ class MainActivity : FlutterActivity() {
                     stopStudyService()
                     result.success(null)
                 }
+                "checkCloneApps" -> result.success(CloneAppDetector.detectInstalledCloneApps(applicationContext))
+                "getDeviceBrand" -> result.success(DeviceInfo.manufacturer())
                 else -> result.notImplemented()
             }
         }
