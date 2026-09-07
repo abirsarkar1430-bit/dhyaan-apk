@@ -1,5 +1,10 @@
 package com.dhyaan.app
 
+import android.content.ComponentName
+import android.content.Context
+import android.media.MediaMetadata
+import android.media.session.MediaController
+import android.media.session.MediaSessionManager
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.google.firebase.Timestamp
@@ -10,17 +15,28 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Listens for system notifications and extracts the title of whatever video
- * YouTube is currently playing (YouTube posts a media-style notification
- * with the video title while a video plays). Everything - de-duping,
- * tagging STUDY/DISTRACTION, saving to Firestore, keeping the local history
- * list, pruning old entries - now happens RIGHT HERE, natively, the moment
- * the title is detected. This used to be split out to Dart code that polled
- * every few seconds, but that only worked while the Dhyaan app screen was
- * alive - which it normally won't be while a student is actually studying.
+ * Detects what video YouTube is currently playing, two ways:
  *
- * Only YouTube's own notification is read, and only its title field - no
- * other app's notifications are inspected or stored.
+ *  1. MEDIA SESSIONS (the main, reliable path) - Android has a system-wide
+ *     "what's currently playing" API (the same one that powers lock-screen
+ *     media controls and "Hey Google, what song is this"). YouTube publishes
+ *     to it whenever ANYTHING plays, foreground or background - unlike
+ *     notifications, which YouTube often does NOT post while the app is
+ *     actively open and visible (no need for playback controls when you're
+ *     already looking at them). This is what actually catches a student
+ *     watching YouTube normally, in the foreground, which notifications
+ *     alone were missing entirely.
+ *
+ *     Reading media sessions requires proof of notification-listener access
+ *     (passing this service's own ComponentName) - NOT a new/separate
+ *     permission, so there's nothing new to ask the student for.
+ *
+ *  2. NOTIFICATION-BASED (kept as a fallback) - still catches the case where
+ *     a notification IS posted (background/lock-screen playback). Both paths
+ *     funnel into handleDetectedTitle(), which de-dupes and also watches for
+ *     Shorts-style rapid scrolling (see its doc comment below) before either
+ *     path reaches the actual save-to-Firestore logic in handleNewTitle() -
+ *     having both detection paths active causes no double-processing.
  */
 class DhyaanNotificationListener : NotificationListenerService() {
 
@@ -29,6 +45,90 @@ class DhyaanNotificationListener : NotificationListenerService() {
     private val DEDUPE_WINDOW_MS = 5 * 60 * 1000L
     private val PRUNE_EVERY_N_WRITES = 5
 
+    // Shorts-scrolling detector: rather than needing to catch every single
+    // Short's title (genuinely uncertain whether YouTube updates media
+    // session metadata cleanly on every rapid swipe), watch for the BEHAVIOR
+    // instead - several video changes in quick succession. That pattern
+    // itself is the signal, regardless of whether every individual title
+    // was caught. Also avoids flooding the parent's history list with
+    // dozens of near-identical rapid-fire entries during a real scroll binge.
+    private val recentTitleChangeTimestamps = mutableListOf<Long>()
+    private val BURST_WINDOW_MS = 45_000L
+    private val BURST_THRESHOLD = 3
+    private val SHORTS_BURST_TITLE = "YouTube Shorts (rapid scrolling)"
+
+    private fun handleDetectedTitle(title: String) {
+        val now = System.currentTimeMillis()
+        recentTitleChangeTimestamps.add(now)
+        recentTitleChangeTimestamps.removeAll { now - it > BURST_WINDOW_MS }
+
+        if (recentTitleChangeTimestamps.size >= BURST_THRESHOLD) {
+            // Several videos changed within the last 45 seconds - treat as a
+            // Shorts-scrolling burst, log ONE distraction entry for it rather
+            // than chasing each individual video.
+            handleNewTitle(SHORTS_BURST_TITLE, forceType = "DISTRACTION")
+        } else {
+            handleNewTitle(title)
+        }
+    }
+
+    private var activeYoutubeController: MediaController? = null
+
+    private val mediaControllerCallback = object : MediaController.Callback() {
+        override fun onMetadataChanged(metadata: MediaMetadata?) {
+            val title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
+            if (!title.isNullOrBlank()) handleDetectedTitle(title)
+        }
+    }
+
+    private val activeSessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
+        attachToYoutubeSession(controllers)
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        try {
+            val msm = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+            val self = ComponentName(this, DhyaanNotificationListener::class.java)
+            msm.addOnActiveSessionsChangedListener(activeSessionsListener, self)
+            // Catch a video that was already playing before we connected.
+            attachToYoutubeSession(msm.getActiveSessions(self))
+        } catch (e: Exception) {
+            // If this fails for any reason, notification-based detection
+            // (onNotificationPosted below) still works as a fallback.
+        }
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        try {
+            val msm = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+            msm.removeOnActiveSessionsChangedListener(activeSessionsListener)
+        } catch (e: Exception) {
+            // ignore
+        }
+        activeYoutubeController?.unregisterCallback(mediaControllerCallback)
+        activeYoutubeController = null
+    }
+
+    private fun attachToYoutubeSession(controllers: List<MediaController>?) {
+        val ytController = controllers?.find { it.packageName == YOUTUBE_PACKAGE }
+        // Only re-attach if this is actually a different session than the one
+        // we're already watching, to avoid pointlessly unregister/re-registering.
+        if (ytController?.sessionToken == activeYoutubeController?.sessionToken) return
+
+        activeYoutubeController?.unregisterCallback(mediaControllerCallback)
+        activeYoutubeController = ytController
+        activeYoutubeController?.registerCallback(mediaControllerCallback)
+
+        // Check whatever's already playing right now on this session too -
+        // onMetadataChanged only fires on the NEXT change, so without this,
+        // a video already playing when we attach would be missed until the
+        // student switches to a different video.
+        val title = activeYoutubeController?.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
+        if (!title.isNullOrBlank()) handleDetectedTitle(title)
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
         if (sbn == null || sbn.packageName != YOUTUBE_PACKAGE) return
@@ -36,22 +136,25 @@ class DhyaanNotificationListener : NotificationListenerService() {
         try {
             val title = sbn.notification.extras.getCharSequence("android.title")?.toString()
             if (title.isNullOrBlank()) return
-            handleNewTitle(title)
+            handleDetectedTitle(title)
         } catch (e: Exception) {
             // ignore malformed notifications
         }
     }
 
-    private fun handleNewTitle(title: String) {
+    private fun handleNewTitle(title: String, forceType: String? = null) {
         val prefs = DhyaanCore.prefs(this)
         val lastTitle = prefs.getString(DhyaanCore.PREFIX + "last_processed_title", null)
         val lastMs = prefs.getLong(DhyaanCore.PREFIX + "last_processed_title_ms", 0L)
         val nowMs = System.currentTimeMillis()
 
         // De-dupe: skip if the same title was already processed within the last 5 minutes.
+        // (This same check is what naturally stops the Shorts-burst entry below from
+        // spamming - it always uses the same synthetic title, so repeat bursts within
+        // 5 minutes just fold into "already logged," no separate cooldown needed.)
         if (title == lastTitle && (nowMs - lastMs) < DEDUPE_WINDOW_MS) return
 
-        val type = TitleTagger.tag(title)
+        val type = forceType ?: TitleTagger.tag(title)
         val timeStr = SimpleDateFormat("hh:mm a", Locale.US).format(Date(nowMs))
         val entry = "$title|||$timeStr|||$type"
 

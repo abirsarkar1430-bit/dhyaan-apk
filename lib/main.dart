@@ -219,7 +219,7 @@ class DhyaanApp extends StatelessWidget {
           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         ),
       ),
-      home: const RoleSelectScreen(),
+      home: const SessionGate(),
     );
   }
 }
@@ -341,6 +341,14 @@ const Map<String, String> kFriendlyAppNames = {
   'com.flipkart.android': 'Flipkart',
   'net.one97.paytm': 'Paytm',
   'com.phonepe.app': 'PhonePe',
+  // Educational apps (also in the "okay" / not-distraction allowlist natively)
+  'org.khanacademy.android': 'Khan Academy',
+  'xyz.penpencil.physicswala': 'Physics Wallah',
+  'com.curiousjr': 'CuriousJr',
+  'com.vedantu.app': 'Vedantu',
+  'com.unacademyapp': 'Unacademy',
+  'com.adobe.reader': 'Adobe Acrobat Reader',
+  'com.xodo.pdf.reader': 'Xodo PDF Reader',
 };
 
 /// Returns the friendly name for a known app package, or the raw package
@@ -392,6 +400,56 @@ BrandDualAppInfo? brandDualAppInfo(String rawBrand) {
 // ============================================================================
 // ROLE SELECT
 // ============================================================================
+// ============================================================================
+// SESSION GATE
+// Checked once on every app launch, before anything else. A student stays
+// logged in until they explicitly log out (or the app's data gets cleared/
+// reinstalled) - same for a parent. Only when neither a student nor a
+// parent session is found does this fall through to Role Select.
+// ============================================================================
+class SessionGate extends StatefulWidget {
+  const SessionGate({super.key});
+  @override
+  State<SessionGate> createState() => _SessionGateState();
+}
+
+class _SessionGateState extends State<SessionGate> {
+  @override
+  void initState() {
+    super.initState();
+    _checkSession();
+  }
+
+  Future<void> _checkSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final studentEmail = prefs.getString('student_email');
+    final studentCode = prefs.getString('student_code');
+    final linkedEmail = prefs.getString('linkedEmail');
+    final linkedCode = prefs.getString('linkedCode');
+
+    if (!mounted) return;
+
+    if ((studentEmail ?? '').isNotEmpty && (studentCode ?? '').isNotEmpty) {
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const StudentDashboard()));
+    } else if ((linkedEmail ?? '').isNotEmpty && (linkedCode ?? '').isNotEmpty) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => ParentDashboard(email: linkedEmail!, code: linkedCode!)),
+      );
+    } else {
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const RoleSelectScreen()));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: kBg,
+      body: Center(child: CircularProgressIndicator(color: kBlack)),
+    );
+  }
+}
+
 class RoleSelectScreen extends StatelessWidget {
   const RoleSelectScreen({super.key});
 
@@ -437,7 +495,7 @@ class RoleSelectScreen extends StatelessWidget {
                         icon: Icons.school_rounded,
                         onTap: () => Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (_) => const StudentLoginScreen()),
+                          MaterialPageRoute(builder: (_) => const StudentEntryScreen()),
                         ),
                       ),
                       const SizedBox(height: 14),
@@ -524,6 +582,161 @@ class _RoleCard extends StatelessWidget {
 // ============================================================================
 // STUDENT LOGIN
 // ============================================================================
+// ============================================================================
+// STUDENT ENTRY - choose new registration vs signing back in with a code
+// ============================================================================
+class StudentEntryScreen extends StatelessWidget {
+  const StudentEntryScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Student')),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Welcome',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: kBlack)),
+              const SizedBox(height: 4),
+              const Text('New here, or already have your code?',
+                  style: TextStyle(fontSize: 13, color: kMuted)),
+              const SizedBox(height: 28),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const StudentLoginScreen()),
+                  ),
+                  child: const Text('New Student - Register'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const StudentSignInScreen()),
+                  ),
+                  child: const Text('I Already Have a Code - Sign In'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// STUDENT SIGN IN - lightweight re-login for a returning student who got
+// logged out (app reinstalled, data cleared, etc). Only code + email, NOT
+// the full registration form - the account already exists, this just
+// re-authenticates against it.
+// ============================================================================
+class StudentSignInScreen extends StatefulWidget {
+  const StudentSignInScreen({super.key});
+  @override
+  State<StudentSignInScreen> createState() => _StudentSignInScreenState();
+}
+
+class _StudentSignInScreenState extends State<StudentSignInScreen> {
+  final _email = TextEditingController();
+  final _code = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _signIn() async {
+    final email = _email.text.trim().toLowerCase();
+    final code = _code.text.trim();
+    if (email.isEmpty || code.isEmpty) {
+      setState(() => _error = 'Please enter both fields');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final doc = await FirebaseFirestore.instance.collection('students').doc(email).get();
+      if (doc.exists && doc.data() != null && doc.data()!['code'].toString() == code) {
+        final data = doc.data()!;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('student_code', code);
+        await prefs.setString('student_email', email);
+        await prefs.setString('student_name', (data['name'] ?? '').toString());
+        if (!mounted) return;
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const StudentDashboard()),
+          (route) => false,
+        );
+      } else {
+        setState(() => _error = 'Invalid email or code');
+      }
+    } catch (e) {
+      setState(() => _error = 'Could not reach Firebase: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Sign In')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Welcome back',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: kBlack)),
+              const SizedBox(height: 4),
+              const Text('Enter your email and your permanent code',
+                  style: TextStyle(fontSize: 13, color: kMuted)),
+              const SizedBox(height: 24),
+              TextField(
+                controller: _email,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Email'),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _code,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Your Code'),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: const TextStyle(color: kRed, fontSize: 13)),
+              ],
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : _signIn,
+                  child: _loading
+                      ? const SizedBox(
+                          height: 18, width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Sign In'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class StudentLoginScreen extends StatefulWidget {
   const StudentLoginScreen({super.key});
   @override
@@ -573,7 +786,6 @@ class _StudentLoginScreenState extends State<StudentLoginScreen> {
       }
 
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('linkCode', code);
       await prefs.setString('student_code', code);
       await prefs.setString('student_email', email);
       await prefs.setString('student_name', name);
@@ -765,7 +977,9 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
       email = prefs.getString('student_email') ?? '';
       name = prefs.getString('student_name') ?? '';
       isStudying = prefs.getBool('isStudying') ?? false;
-      studySeconds = prefs.getInt('study_seconds') ?? 0;
+      // studySeconds starts at 0 here and is immediately recalculated from
+      // study_start_ms by _startTicker() below if a session is active -
+      // there's no separately-persisted "study_seconds" value to restore.
       ytHistory = _decodeYtHistory(prefs.getString('yt_history_raw'));
       weekStudyMs = prefs.getInt('week_study_ms') ?? 0;
       weekDistractionMs = prefs.getInt('week_distraction_ms') ?? 0;
@@ -782,6 +996,46 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
     // DhyaanNotificationListener.kt), so this does no network/Firestore work.
     _ytPoller = Timer.periodic(const Duration(seconds: 3), (_) => _refreshLocalYtHistory());
     _permPoller = Timer.periodic(const Duration(seconds: 5), (_) => _refreshPermissions());
+  }
+
+  // Logs out: stops any active study session first (logging out mid-session
+  // would otherwise leave the foreground service running for nobody), then
+  // clears identity so SessionGate falls through to Role Select next launch.
+  // The student's account and code are untouched in Firestore - signing
+  // back in with StudentSignInScreen (email + code) restores everything.
+  Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Log out?'),
+        content: const Text('You can sign back in anytime with your email and your permanent code.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Log Out', style: TextStyle(color: kRed)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    if (isStudying) {
+      await NativeBridge.stopStudyService();
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('student_code');
+    await prefs.remove('student_email');
+    await prefs.remove('student_name');
+    await prefs.setBool('isStudying', false);
+
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const RoleSelectScreen()),
+      (route) => false,
+    );
   }
 
   // Checks for known clone/dual-space apps AND the device brand (so we can
@@ -979,7 +1233,16 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
     final offlineMins = (offlineMs / 60000).floor();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Student Dashboard')),
+      appBar: AppBar(
+        title: const Text('Student Dashboard'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout_rounded),
+            tooltip: 'Log out',
+            onPressed: _logout,
+          ),
+        ],
+      ),
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: () async {
@@ -1481,12 +1744,55 @@ class ParentDashboard extends StatelessWidget {
   final String code;
   const ParentDashboard({super.key, required this.email, required this.code});
 
+  // Clears the saved parent session so SessionGate falls through to Role
+  // Select next launch. Nothing about the child's account or data is
+  // touched - linking again later with the same email + code works exactly
+  // as before.
+  Future<void> _logoutParent(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Log out?'),
+        content: const Text('You can link again anytime with your child\'s email and code.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Log Out', style: TextStyle(color: kRed)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('linkedEmail');
+    await prefs.remove('linkedCode');
+
+    if (!context.mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const RoleSelectScreen()),
+      (route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final studentDoc = FirebaseFirestore.instance.collection('students').doc(email);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Parent Dashboard')),
+      appBar: AppBar(
+        title: const Text('Parent Dashboard'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout_rounded),
+            tooltip: 'Log out',
+            onPressed: () => _logoutParent(context),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           stream: studentDoc.snapshots(),
@@ -1744,13 +2050,17 @@ class ParentDashboard extends StatelessWidget {
   Widget _weeklyFocusCard() {
     final dailyStatsRef = FirebaseFirestore.instance.collection('students').doc(email).collection('dailyStats');
 
-    // Last 7 calendar days, oldest first, ending today - a real rolling
-    // trend rather than a fixed Monday-start week. A day with no recorded
-    // session simply has no document, which correctly reads as 0 below.
+    // Monday-Sunday of the CURRENT calendar week - matching the "This Week"
+    // totals above (which already reset every Monday, natively) rather than
+    // a rolling 7-day window. Days later than today (if today isn't Sunday
+    // yet) simply have no document and correctly show as 0 - they haven't
+    // happened yet, not because of a bug.
     final now = DateTime.now();
-    final dates = List.generate(7, (i) => DateTime(now.year, now.month, now.day).subtract(Duration(days: 6 - i)));
+    final todayIndex = now.weekday - 1; // Monday=0 .. Sunday=6
+    final monday = DateTime(now.year, now.month, now.day).subtract(Duration(days: todayIndex));
+    final dates = List.generate(7, (i) => monday.add(Duration(days: i)));
     final dateKeys = dates.map(_dateKey).toList();
-    const dayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S']; // Monday=1..Sunday=7
+    const dayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S']; // Monday..Sunday
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: dailyStatsRef.where(FieldPath.documentId, whereIn: dateKeys).snapshots(),
@@ -1771,17 +2081,17 @@ class ParentDashboard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('WEEKLY FOCUS',
+              const Text('WEEKLY FOCUS (MON-SUN)',
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 1, color: kMuted)),
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: List.generate(7, (i) {
-                  final isToday = i == 6; // last item is always today, since the list ends today
+                  final isToday = i == todayIndex;
                   final hours = studyHoursByDate[dateKeys[i]] ?? 0.0;
                   final h = (hours / maxHours * 80).clamp(4.0, 80.0);
-                  final weekdayLetter = dayLetters[dates[i].weekday - 1];
+                  final weekdayLetter = dayLetters[i];
                   return Column(
                     children: [
                       Container(

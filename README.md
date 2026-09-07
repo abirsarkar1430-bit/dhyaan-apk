@@ -155,6 +155,110 @@ Settings > Apps > Dual Apps." Covers Xiaomi/Redmi/POCO, Samsung, Oppo,
 Vivo, Realme, OnePlus, and Huawei/Honor - the brand -> feature-name mapping
 lives in one place in Dart (`brandDualAppInfo`) if it ever needs updating.
 
+## Session persistence: students and parents stay logged in
+
+Fixed a real gap found during the final review pass: the app used to make
+everyone re-enter their details on every single launch, even though the
+login info was already saved on the device. Now:
+
+- **Students**: sign in once (register, or an existing code) and the app
+  goes straight to the dashboard on every future launch - no re-entry.
+- **Parents**: link once with the child's email + code, same auto-login
+  behavior afterward.
+- **Both** have an explicit **Log Out** button (top-right of their
+  dashboard) for when a phone changes hands or an account needs clearing.
+- **After logging out** (or if the app gets deleted/reinstalled and local
+  data is lost): a parent re-links exactly as before (email + code). A
+  **student** gets a lightweight "I already have a code" sign-in screen -
+  just email + code, not the full name/phone registration form again,
+  since the account already exists. New students still register fully via
+  "New Student - Register."
+
+This is enforced by a small `SessionGate` screen that runs once on every
+app launch, before anything else, and decides where to send the user based
+on what's already saved locally - Role Select is now only ever seen by
+someone with no active session.
+
+## App-level classification: some apps always distraction, some never counted
+
+Clarified and implemented precisely:
+
+- **Instagram, Facebook, WhatsApp, and every other app not explicitly
+  listed as "okay"** count toward distraction time during a study session,
+  same as before.
+- **Explicitly excluded from distraction counting** ("okay" apps):
+  Google Drive, Google Docs/Sheets/Slides, Adobe Acrobat Reader, Microsoft
+  Word/Excel/PowerPoint, Xodo PDF Reader, Khan Academy, **Physics Wallah,
+  CuriousJr, Vedantu, Unacademy** (all four verified via their actual Play
+  Store listing URLs, not guessed - worth noting Unacademy's real learner
+  app is `com.unacademyapp`, NOT `com.unacademy`, which is a completely
+  different app, the Unacademy Educator app for teachers). This list is
+  deliberately conservative - only apps with a package name I'm actually
+  confident about are included. See `AppClassification` in `DhyaanCore.kt`
+  to add more (exact package name required - a wrong guess would silently
+  exempt the wrong app from tracking, worse than just not having it listed
+  yet).
+- **YouTube is excluded from this app-level bucket entirely** - it already
+  has its own, more accurate PER-VIDEO classification (`TitleTagger`),
+  shown separately in "YouTube Titles" / "What Was Studied" / "Distractions
+  Detected." Counting it again at the whole-app level would double-count,
+  and could even contradict the per-video verdict (a genuinely educational
+  video would otherwise inflate "distraction minutes" purely for being
+  inside the YouTube app).
+
+## Weekly Focus chart: Monday-Sunday, not a rolling window
+
+Corrected to match "This Week - Studied/Distracted" above it: a real
+calendar week, Monday through Sunday, resetting together with those totals
+(both driven by the same native week-rollover logic). A previous version of
+this chart used a rolling "last 7 days ending today" window instead - fixed
+to align with the rest of the app's Monday-Sunday semantics. Days later in
+the week than today (if today isn't Sunday yet) correctly show 0 - they
+haven't happened yet.
+
+
+
+## Shorts: detected by pattern, not by chasing every individual video
+
+Rather than needing to catch every single Short's title (genuinely
+uncertain whether YouTube updates its media session cleanly on every rapid
+swipe - see the note below), the app now watches for the **behavior**
+instead: 3 or more video changes within 45 seconds is treated as a Shorts-
+scrolling burst, logged as a single "YouTube Shorts (rapid scrolling)"
+distraction entry rather than chasing each individual video. This sidesteps
+the exact uncertainty flagged earlier, and is arguably better UX anyway -
+catching every individual Short during a real scroll binge would flood the
+parent's history list with dozens of near-identical entries in a few
+minutes. Any single, normally-watched video (not part of a rapid burst)
+still gets tagged individually as before. Tunable via `BURST_WINDOW_MS` and
+`BURST_THRESHOLD` in `DhyaanNotificationListener.kt` if 45 seconds / 3
+changes turns out too sensitive or not sensitive enough on real devices.
+
+## Fixed: YouTube titles weren't detected while actively watching (foreground)
+
+Real-device testing surfaced an important gap: YouTube usually only posts
+its playback notification during **background/lock-screen** playback - not
+while a student has the app open and is actively watching, which is the
+single most common way anyone watches YouTube. The old notification-only
+approach was silently missing the majority of real viewing.
+
+**Fixed** by also monitoring Android's media session system - the same
+"now playing" mechanism behind lock-screen media controls and "Hey Google,
+what song is this." YouTube publishes to this whenever anything plays,
+foreground or background, independent of whether a notification happens to
+be showing. Reading it requires proof of notification-listener access
+(passing this service's own component name) - **not a new permission**, so
+there's nothing extra to ask the student for. The original
+notification-based detection stays active too, as a harmless fallback
+(both paths share the same de-dupe logic, so nothing double-processes).
+
+**Still worth verifying on a real device:** whether YouTube reliably
+updates its media session metadata the instant a student switches videos
+within the app (versus only on play/pause/app-open). This is the kind of
+platform behavior that's genuinely hard to be 100% certain about without
+testing - if titles still lag or miss during foreground switching after
+this fix, that's the next thing to look at.
+
 ## Fixed: missing runtime notification permission (Android 13+)
 
 On Android 13+ (API 33+), `POST_NOTIFICATIONS` is a real runtime permission

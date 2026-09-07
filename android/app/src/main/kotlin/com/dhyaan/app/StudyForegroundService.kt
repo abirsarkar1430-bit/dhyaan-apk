@@ -235,6 +235,8 @@ class StudyForegroundService : Service() {
         var totalDuringSessionMins = 0L
         for ((pkg, mins) in current) {
             if (pkg == packageName) continue // don't count checking Dhyaan itself as a "distraction app"
+            if (pkg == "com.google.android.youtube") continue // YouTube has its own, more accurate PER-VIDEO study/distraction tagging (see TitleTagger) - counting it again here at the whole-app level would double-count and could even contradict that per-video verdict (e.g. a genuinely educational video inflating "distraction minutes" just because it's the YouTube app)
+            if (AppClassification.OKAY_APPS.contains(pkg)) continue // educational/document apps - not counted as distraction (see AppClassification in DhyaanCore.kt)
             val before = baseline[pkg] ?: 0L
             val delta = mins - before
             if (delta >= 1L) {

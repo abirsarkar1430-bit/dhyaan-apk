@@ -341,3 +341,33 @@ object DeviceInfo {
     fun manufacturer(): String = android.os.Build.MANUFACTURER
 }
 
+/**
+ * Apps explicitly excluded from "distraction" counting during a study
+ * session - genuinely educational/document/utility apps a student might
+ * legitimately need mid-study (checking a PDF, a shared Drive doc).
+ *
+ * Deliberately conservative: only apps we're actually confident about the
+ * exact package name for are listed here. Anything NOT listed still counts
+ * toward distraction time as before - safer to slightly over-count than to
+ * silently exempt the wrong app because of a guessed/wrong package name.
+ * Add more here (with the exact package name) as needed.
+ */
+object AppClassification {
+    val OKAY_APPS = setOf(
+        "com.google.android.apps.docs",                // Google Drive
+        "com.google.android.apps.docs.editors.docs",    // Google Docs
+        "com.google.android.apps.docs.editors.sheets",  // Google Sheets
+        "com.google.android.apps.docs.editors.slides",  // Google Slides
+        "com.adobe.reader",                             // Adobe Acrobat Reader
+        "com.microsoft.office.word",
+        "com.microsoft.office.excel",
+        "com.microsoft.office.powerpoint",
+        "com.xodo.pdf.reader",                          // Xodo PDF Reader
+        "org.khanacademy.android",                       // Khan Academy
+        "xyz.penpencil.physicswala",                     // Physics Wallah (PW) - verified via Play Store URL
+        "com.curiousjr",                                 // CuriousJr (PW subsidiary) - verified via Play Store URL
+        "com.vedantu.app",                               // Vedantu - verified via Play Store URL
+        "com.unacademyapp"                               // Unacademy (main learner app - NOT com.unacademy, which is the Educator app) - verified via Play Store URL
+    )
+}
+
