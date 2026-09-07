@@ -5,6 +5,8 @@ import android.content.Context
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.google.firebase.Timestamp
@@ -57,6 +59,21 @@ class DhyaanNotificationListener : NotificationListenerService() {
     private val BURST_THRESHOLD = 3
     private val SHORTS_BURST_TITLE = "YouTube Shorts (rapid scrolling)"
 
+    // Real-device testing surfaced a false-positive: YouTube's home feed
+    // auto-plays short, silent PREVIEWS when you pause on a thumbnail while
+    // scrolling - you never tapped it, never watched it, but for a second or
+    // two YouTube's media session briefly reports it as "now playing." A
+    // genuinely watched video stays current for much longer than a scroll-
+    // past preview, so before logging a SINGLE video (not a Shorts burst,
+    // which is already handled separately above), wait and confirm the
+    // title is STILL the current one after a short delay. If it changed
+    // again before that, it was almost certainly just a feed preview
+    // flicker, not something the student actually watched.
+    private val handler = Handler(Looper.getMainLooper())
+    private var pendingTitle: String? = null
+    private var pendingRunnable: Runnable? = null
+    private val MIN_WATCH_CONFIRM_MS = 7_000L
+
     private fun handleDetectedTitle(title: String) {
         val now = System.currentTimeMillis()
         recentTitleChangeTimestamps.add(now)
@@ -65,10 +82,23 @@ class DhyaanNotificationListener : NotificationListenerService() {
         if (recentTitleChangeTimestamps.size >= BURST_THRESHOLD) {
             // Several videos changed within the last 45 seconds - treat as a
             // Shorts-scrolling burst, log ONE distraction entry for it rather
-            // than chasing each individual video.
+            // than chasing each individual video. No confirmation delay
+            // needed here - the burst pattern itself IS the confirmation.
+            pendingRunnable?.let { handler.removeCallbacks(it) }
+            pendingTitle = null
             handleNewTitle(SHORTS_BURST_TITLE, forceType = "DISTRACTION")
         } else {
-            handleNewTitle(title)
+            // Possible single video - or possible feed-scroll preview
+            // flicker. Cancel any earlier pending confirmation (that title
+            // clearly wasn't stable, since THIS new title just replaced it)
+            // and wait to see if THIS one sticks around.
+            pendingRunnable?.let { handler.removeCallbacks(it) }
+            pendingTitle = title
+            val runnable = Runnable {
+                if (pendingTitle == title) handleNewTitle(title)
+            }
+            pendingRunnable = runnable
+            handler.postDelayed(runnable, MIN_WATCH_CONFIRM_MS)
         }
     }
 
@@ -109,6 +139,9 @@ class DhyaanNotificationListener : NotificationListenerService() {
         }
         activeYoutubeController?.unregisterCallback(mediaControllerCallback)
         activeYoutubeController = null
+        pendingRunnable?.let { handler.removeCallbacks(it) }
+        pendingRunnable = null
+        pendingTitle = null
     }
 
     private fun attachToYoutubeSession(controllers: List<MediaController>?) {

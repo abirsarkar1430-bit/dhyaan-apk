@@ -1385,13 +1385,25 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
 
               // During Last Study Session - which apps were used, and for how
               // long, WHILE a study session was active (computed natively by
-              // comparing app-usage at session start vs session end).
-              if (lastSessionAppUsage.isNotEmpty) ...[
-                AppCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SectionTitle('During Last Study Session'),
+              // comparing app-usage at session start vs session end). Always
+              // shown, even before any qualifying data exists - a card that
+              // disappears when empty looks identical to "this feature
+              // doesn't exist," which isn't the message we want to send.
+              AppCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SectionTitle('During Last Study Session'),
+                    if (lastSessionAppUsage.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text(
+                          'No completed study sessions yet. This fills in once a study session runs '
+                          '5+ minutes and is stopped.',
+                          style: TextStyle(fontSize: 12, color: kMuted, height: 1.3),
+                        ),
+                      )
+                    else ...[
                       if (lastSessionDurationMins > 0)
                         Padding(
                           padding: const EdgeInsets.only(top: 2, bottom: 8),
@@ -1415,10 +1427,10 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
                                 ),
                               )),
                     ],
-                  ),
+                  ],
                 ),
-                const SizedBox(height: 16),
-              ],
+              ),
+              const SizedBox(height: 16),
 
               // Clone/dual-space app check
               if (cloneCheckDone) ...[
@@ -1492,7 +1504,11 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text('Whole day, not just study sessions - includes Dhyaan itself',
+                          style: TextStyle(fontSize: 11, color: kMuted)),
+                    ),
                     if (topApps.isEmpty)
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 12),
@@ -1840,6 +1856,9 @@ class ParentDashboard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      const Text('Whole day\'s phone usage - not just study sessions',
+                          style: TextStyle(fontSize: 11, color: kMuted)),
+                      const SizedBox(height: 10),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -1955,13 +1974,24 @@ class ParentDashboard extends StatelessWidget {
                 // During Last Study Session - exactly what was requested:
                 // per-student, time-only visibility into which apps were
                 // used and for how long WHILE studying. Never shows video
-                // titles or content - that stays parent/student-only.
-                if (lastSessionAppUsage.isNotEmpty) ...[
-                  AppCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SectionTitle('During Last Study Session'),
+                // titles or content - that stays parent/student-only. Always
+                // rendered, even before any data exists - a card that
+                // disappears when empty looks identical to "not built."
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SectionTitle('During Last Study Session'),
+                      if (lastSessionAppUsage.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: Text(
+                            'No completed study sessions yet. This fills in once a study session runs '
+                            '5+ minutes and is stopped.',
+                            style: TextStyle(fontSize: 12, color: kMuted, height: 1.3),
+                          ),
+                        )
+                      else ...[
                         if (lastSessionDurationMins > 0)
                           Padding(
                             padding: const EdgeInsets.only(top: 2, bottom: 8),
@@ -1986,10 +2016,10 @@ class ParentDashboard extends StatelessWidget {
                                   ),
                                 )),
                       ],
-                    ),
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                ],
+                ),
+                const SizedBox(height: 16),
 
                 // Weekly focus (illustrative day-by-day chart - see README)
                 _weeklyFocusCard(),
