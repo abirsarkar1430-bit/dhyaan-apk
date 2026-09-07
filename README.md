@@ -155,6 +155,31 @@ Settings > Apps > Dual Apps." Covers Xiaomi/Redmi/POCO, Samsung, Oppo,
 Vivo, Realme, OnePlus, and Huawei/Honor - the brand -> feature-name mapping
 lives in one place in Dart (`brandDualAppInfo`) if it ever needs updating.
 
+## Fixed: missing runtime notification permission (Android 13+)
+
+On Android 13+ (API 33+), `POST_NOTIFICATIONS` is a real runtime permission
+requiring an actual popup - declaring it in the manifest (already done) is
+necessary but not sufficient. Without requesting it, the ongoing "Dhyaan
+tracking..." notification would silently never appear on newer phones, no
+error anywhere - the whole point of the transparency design quietly broken
+on exactly the newest devices. Fixed: a third row, "Show Notifications," now
+appears in the permission banner when needed, and tapping it triggers the
+real system popup (`requestPostNotificationsPermission()` in
+`MainActivity.kt`) rather than opening a Settings page like the other two
+permissions do - Android handles this one differently since it's a normal
+runtime permission, not a special app-op grant.
+
+## Fixed: Dhyaan not appearing in the Usage Access settings list
+
+`PACKAGE_USAGE_STATS` can never be granted through a normal popup - that
+part of the original build notes was correct. What was missing: the
+manifest still needs a `<uses-permission>` declaration for it, or Android
+has no reason to list Dhyaan as a candidate app on the Usage Access
+settings screen at all. Without it, tapping "Enable" correctly opens the
+right Settings page - it's just empty of Dhyaan. Fixed by adding the
+declaration (with `tools:ignore="ProtectedPermissions"`, same pattern
+already used for the Notification Listener permission).
+
 ## Weekly totals (new)
 
 Both dashboards now show **"This Week - Studied"** and **"This Week -
@@ -221,6 +246,14 @@ At the moment a session starts, the app takes a snapshot of every app's
 usage-so-far; when the session ends (or every 5 minutes during a long
 session), it compares against that snapshot to work out exactly which apps
 were used, and for how long, **while studying was supposedly happening**.
+This was briefly tightened to 1 minute for faster live-visibility, then
+reverted back to 5 minutes - each check writes a fresh snapshot to
+Firestore regardless of whether anything changed, so 1-minute checks meant
+roughly 5x the writes per session. With the priority now on supporting as
+many concurrent users as possible on the free tier, 5 minutes is the
+better default; a short mid-session distraction still always shows up for
+certain by the time the session ends (the final check always fires on Stop),
+just not necessarily live within the first few minutes.
 This is shown on both the student's and parent's dashboard as "During Last
 Study Session" - per-student, time-only (which app, how many minutes) -
 **never video titles or content**, matching exactly what you asked for on

@@ -1,9 +1,11 @@
 package com.dhyaan.app
 
+import android.Manifest
 import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Process
@@ -55,6 +57,11 @@ class MainActivity : FlutterActivity() {
                 }
                 "checkCloneApps" -> result.success(CloneAppDetector.detectInstalledCloneApps(applicationContext))
                 "getDeviceBrand" -> result.success(DeviceInfo.manufacturer())
+                "hasNotifPostPermission" -> result.success(hasPostNotificationsPermission())
+                "requestNotifPostPermission" -> {
+                    requestPostNotificationsPermission()
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -161,5 +168,24 @@ class MainActivity : FlutterActivity() {
         val intent = Intent(this, StudyForegroundService::class.java)
         intent.action = StudyForegroundService.ACTION_STOP
         startService(intent)
+    }
+
+    // POST_NOTIFICATIONS - required at RUNTIME (a real popup, not a Settings
+    // toggle) on Android 13+ (API 33+), or the ongoing "Dhyaan tracking..."
+    // notification silently never shows up, with no error anywhere. Declaring
+    // it in the manifest (already done) is necessary but NOT sufficient on
+    // API 33+ - this is what actually triggers the system permission popup.
+    // Using plain framework methods here (not the AndroidX ActivityCompat/
+    // ContextCompat wrappers) since minSdkVersion is already 24, so no
+    // backport shim is needed.
+    private fun hasPostNotificationsPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true // not required before Android 13
+        return checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestPostNotificationsPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+        }
     }
 }

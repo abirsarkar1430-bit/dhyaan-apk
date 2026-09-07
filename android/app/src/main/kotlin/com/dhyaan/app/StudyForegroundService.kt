@@ -42,7 +42,7 @@ class StudyForegroundService : Service() {
         const val ACTION_STOP = "com.dhyaan.app.action.STOP"
         const val CHANNEL_ID = "dhyaan_study"
         const val NOTIF_ID = 1
-        private const val DISTRACTION_CHECK_INTERVAL_MS = 5 * 60 * 1000L // every 5 min, to limit Firestore writes
+        private const val DISTRACTION_CHECK_INTERVAL_MS = 5 * 60 * 1000L // every 5 min - prioritizing write capacity (more concurrent users) over live-visibility speed
     }
 
     private val handler = Handler(Looper.getMainLooper())

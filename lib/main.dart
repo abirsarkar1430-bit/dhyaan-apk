@@ -118,6 +118,27 @@ class NativeBridge {
       return '';
     }
   }
+
+  // POST_NOTIFICATIONS - the runtime popup required on Android 13+ or the
+  // ongoing study-tracking notification silently never appears. Separate
+  // from hasNotifPermission()/openNotifSettings() above, which are for a
+  // completely different permission (Notification Listener access, for
+  // reading YouTube's notifications) - same word "notification," different
+  // Android permission entirely.
+  static Future<bool> hasNotifPostPermission() async {
+    try {
+      final result = await _channel.invokeMethod('hasNotifPostPermission');
+      return result == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> requestNotifPostPermission() async {
+    try {
+      await _channel.invokeMethod('requestNotifPostPermission');
+    } catch (_) {}
+  }
 }
 
 // ============================================================================
@@ -700,6 +721,7 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
 
   bool hasUsagePermission = false;
   bool hasNotifPermission = false;
+  bool hasNotifPostPermission = false;
 
   bool isStudying = false;
   int studySeconds = 0;
@@ -839,10 +861,12 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
   Future<void> _refreshPermissions() async {
     final u = await NativeBridge.hasUsagePermission();
     final n = await NativeBridge.hasNotifPermission();
+    final np = await NativeBridge.hasNotifPostPermission();
     if (!mounted) return;
     setState(() {
       hasUsagePermission = u;
       hasNotifPermission = n;
+      hasNotifPostPermission = np;
     });
   }
 
@@ -966,8 +990,8 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
           child: ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              if (!hasUsagePermission || !hasNotifPermission) _permissionBanner(),
-              if (!hasUsagePermission || !hasNotifPermission) const SizedBox(height: 16),
+              if (!hasUsagePermission || !hasNotifPermission || !hasNotifPostPermission) _permissionBanner(),
+              if (!hasUsagePermission || !hasNotifPermission || !hasNotifPostPermission) const SizedBox(height: 16),
 
               // Code card
               AppCard(
@@ -1322,6 +1346,9 @@ class _StudentDashboardState extends State<StudentDashboard> with WidgetsBinding
             _permRow('Usage Access', 'Required to track app usage', NativeBridge.openUsageSettings),
           if (!hasNotifPermission)
             _permRow('Notification Access', 'Required to detect YouTube titles', NativeBridge.openNotifSettings),
+          if (!hasNotifPostPermission)
+            _permRow('Show Notifications', 'Required so the study timer notification can appear',
+                NativeBridge.requestNotifPostPermission),
         ],
       ),
     );
